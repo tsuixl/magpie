@@ -52,6 +52,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
     const context = await browser.newContext({ viewport: { width: 1100, height: 640 }, reducedMotion: "reduce" });
     const page = await context.newPage();
+    // The request/session grouping buttons also use rt-day. Wait for and
+    // click only the date bar, including while its history is loading.
+    const dayButtons = page.locator(".rt-days .rt-day");
     page.setDefaultTimeout(5000);
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
@@ -65,16 +68,16 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     });
     async function reset() {
       await page.goto("http://magpie.test/?view=routing");
-      await page.locator(".rt-day").nth(1).waitFor();
+      await dayButtons.nth(1).waitFor();
     }
     // the reader scrolls the view till sel is y under its top, or less
     async function scrollTo(sel, y = 300) {
       const box = await page.locator(view).boundingBox();
       await page.mouse.move(box.x + box.width / 2, box.y + 40);
-      for (let i = 0, last; i < 150 && (await top(page, sel)) - box.y > y; i++) {
-        const now = await page.locator(view).evaluate((v) => v.scrollTop);
-        if (now === last) break; // at the end
-        last = now;
+      for (let i = 0; i < 150 && (await top(page, sel)) - box.y > y; i++) {
+        // An unchanged frame need not mean the end: WebKit can still be
+        // applying the previous wheel event. Check the scroll boundary.
+        if (await page.locator(view).evaluate((v) => v.scrollTop + v.clientHeight >= v.scrollHeight - 1)) break;
         await page.mouse.wheel(0, 20);
         await page.waitForTimeout(20);
       }
@@ -83,18 +86,29 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert(await page.locator(view).evaluate((v) => v.scrollTop > 0), "the view must have scrolled");
     }
 
+    await t.test("date controls stay separate from request grouping controls", async () => {
+      await reset();
+      assert.equal(await page.locator(".rt-group-by .rt-day").count(), 2, "the grouping controls share the date-button class");
+      assert.equal(await dayButtons.count(), 2, "only Live and the fixture's history day should be selected");
+      assert.match(await dayButtons.first().innerText(), /Live/);
+      await dayButtons.nth(1).click();
+      await page.locator(".rt-req").first().waitFor();
+      assert.equal(await dayButtons.nth(1).getAttribute("aria-pressed"), "true");
+      assert.equal(await page.locator(".rt-group-by .rt-day").first().getAttribute("aria-pressed"), "true", "picking a day preserves By request");
+    });
+
     await t.test("Live and a day, picked in turn, stay under the pointer", async () => {
       await reset();
-      await page.locator(".rt-day").nth(1).click(); // the day's requests, the list full
+      await dayButtons.nth(1).click(); // the day's requests, the list full
       await settle(page);
       // down to the list's end: Live, with none, leaves the page shorter
       await scrollTo(".rt-days", 0);
       assert(await page.locator(view).evaluate((v) => v.scrollTop + v.clientHeight >= v.scrollHeight - 2), "the view must be at its end");
       for (const i of [0, 1, 0, 1]) {
-        const chip = page.locator(".rt-day").nth(i), was = await top(page, ".rt-days");
+        const chip = dayButtons.nth(i), was = await top(page, ".rt-days");
         await chip.click();
         await settle(page);
-        assert.equal(await page.locator(".rt-day").nth(i).getAttribute("aria-pressed"), "true");
+        assert.equal(await dayButtons.nth(i).getAttribute("aria-pressed"), "true");
         const is = await top(page, ".rt-days");
         assert(Math.abs(is - was) <= 1, `picking ${i ? "the day" : "Live"} moved the page ${Math.round(is - was)}px`);
       }
@@ -102,7 +116,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
     await t.test("a request picked in the list, and Replay them all, stay under the pointer", async () => {
       await reset();
-      await page.locator(".rt-day").nth(1).click();
+      await dayButtons.nth(1).click();
       await settle(page);
       for (const i of [3, 7, 5]) {
         const row = () => page.locator(".rt-req").nth(i);
@@ -208,10 +222,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
 
     await t.test("the room kept for a click goes as the reader scrolls back", async () => {
       await reset();
-      await page.locator(".rt-day").nth(1).click();
+      await dayButtons.nth(1).click();
       await settle(page);
       await scrollTo(".rt-days", 0);
-      await page.locator(".rt-day").nth(0).click(); // Live: none, the page shorter
+      await dayButtons.nth(0).click(); // Live: none, the page shorter
       await settle(page);
       assert(await page.locator(view).evaluate((v) => !!v.querySelector(":scope > .view-room")), "room must be kept");
       const box = await page.locator(view).boundingBox();
@@ -224,7 +238,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     await t.test("the reader's wheel still scrolls after a click", async () => {
       await reset();
       await page.locator(view).evaluate((v) => { const s = document.createElement("div"); s.style.cssText = "flex:none;height:1600px"; v.append(s); });
-      await page.locator(".rt-day").nth(1).click();
+      await dayButtons.nth(1).click();
       const was = await page.locator(view).evaluate((v) => v.scrollTop);
       const box = await page.locator(view).boundingBox();
       await page.mouse.move(box.x + box.width / 2, box.y + 60);
