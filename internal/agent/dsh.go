@@ -138,7 +138,7 @@ func dshAt(at place) *Agent {
 					return err
 				}
 			}
-			if err := dshMirrorHome(dir, nil, gw()); err != nil {
+			if err := dshMirrorHome(dir, nil, gw(), true); err != nil {
 				return err
 			}
 			return dshEnv(dir, false)
@@ -190,22 +190,59 @@ func dshProfiles(dir string) []string {
 // of the same id, whatever magpie wrote in that one (#804).
 func dshHomePatch(dir string) string { return filepath.Join(dir, "cordis.patch.yml") }
 
-// dshOver is a profile's patch list as dsh goes by it: the home layer's
-// entries after the profile's own, so dshFindLast finds the one dsh uses.
-// It is for reading only.
+// dshOver is a profile's patch list as dsh goes by it. A home patch only
+// replaces the fields it supplies: config replaces the whole config, but
+// disabled:false alone leaves the profile's config intact. For reading only.
 func dshOver(dir string, items []dshItem) []dshItem {
 	_, home, err := dshRead(dshHomePatch(dir))
 	if err != nil || len(home) == 0 {
 		return items
 	}
-	return append(append([]dshItem{}, items...), home...)
+	out := append([]dshItem{}, items...)
+	for _, patch := range home {
+		i := dshFindLast(out, patch.id)
+		if i < 0 {
+			out = append(out, patch)
+			continue
+		}
+		n, err := dshNode(out[i])
+		p, patchErr := dshNode(patch)
+		if err != nil || patchErr != nil {
+			out = append(out, patch)
+			continue
+		}
+		if name, prev := yamlKey(p, "name"), yamlKey(n, "name"); name != nil && prev != nil && name.Value != "" && name.Value != prev.Value {
+			continue // dsh ignores a patch naming a different plugin
+		}
+		for k := 0; k+1 < len(p.Content); k += 2 {
+			if key := p.Content[k].Value; key != "id" && key != "name" {
+				yamlSetKey(n, key, p.Content[k+1])
+			}
+		}
+		if lines, err := dshNodeLines(n); err == nil {
+			out[i].lines = lines
+		}
+	}
+	return out
 }
 
-// dshHomeHas reports whether the home layer has an entry of this id, which
-// then goes over every profile's.
+// dshConfigIndex is the last patch supplying this row's config. A later
+// metadata-only patch must not hide it or acquire a replacement config.
+func dshConfigIndex(items []dshItem, id string) int {
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].id == id {
+			if n, err := dshNode(items[i]); err == nil && yamlKey(n, "config") != nil {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// dshHomeHas reports whether the home layer overrides this row's config.
 func dshHomeHas(dir, id string) bool {
 	_, home, err := dshRead(dshHomePatch(dir))
-	return err == nil && dshFindLast(home, id) >= 0
+	return err == nil && dshConfigIndex(home, id) >= 0
 }
 
 // dshMirrorHome gives the home layer what magpie wrote in the profiles, for
@@ -213,8 +250,10 @@ func dshHomeHas(dir, id string) bool {
 // there (the user's routes beside it stay), and in an agent-default-model
 // there the model magpie set. Without it dsh ran the home layer's snapshot
 // while magpie read as connected (#804). An entry the home layer doesn't
-// have is not added: the profiles' own then apply, as written.
-func dshMirrorHome(dir string, models []catalog.Model, gw string) error {
+// have is not added: the profiles' own then apply, as written. start is
+// true only for an explicit model pick or disconnect. Catalog refreshes
+// leave the home layer's start model alone, as they do the profiles'.
+func dshMirrorHome(dir string, models []catalog.Model, gw string, start bool) error {
 	files := dshProfiles(dir)
 	if len(files) == 0 {
 		return nil
@@ -229,7 +268,7 @@ func dshMirrorHome(dir string, models []catalog.Model, gw string) error {
 		return nil
 	}
 	before := dshJoin(items)
-	if dshFindLast(items, dshPiRow) >= 0 {
+	if dshConfigIndex(items, dshPiRow) >= 0 {
 		on := dshWired(web)
 		if !on || len(models) > 0 {
 			if items, err = dshPutRoute(items, on, models, gw); err != nil {
@@ -237,7 +276,7 @@ func dshMirrorHome(dir string, models []catalog.Model, gw string) error {
 			}
 		}
 	}
-	if i := dshFindLast(items, "agent-default-model"); i >= 0 {
+	if i := dshConfigIndex(items, "agent-default-model"); start && i >= 0 {
 		j := dshFindLast(web, "agent-default-model")
 		switch {
 		case j >= 0 && dshOurs(web[j]):
@@ -452,7 +491,7 @@ func dshConfig(it dshItem) map[string]string {
 // dshRouteIn is magpie's route among the custom providers of a patch list,
 // nil when there is none.
 func dshRouteIn(items []dshItem) *yaml.Node {
-	i := dshFindLast(items, dshPiRow)
+	i := dshConfigIndex(items, dshPiRow)
 	if i < 0 {
 		return nil
 	}
@@ -711,7 +750,7 @@ func dshSet(dir, v, gw string) error {
 			return err
 		}
 	}
-	if err := dshMirrorHome(dir, models, gw); err != nil {
+	if err := dshMirrorHome(dir, models, gw, true); err != nil {
 		return err
 	}
 	// what an older dsh was given is no use now
@@ -836,7 +875,10 @@ func dshSetFile(path, v string, modern bool, models []catalog.Model, gw string) 
 // Other routes there, the user's or ones dsh added beside magpie's, stay; an
 // entry left with nothing goes.
 func dshPutRoute(items []dshItem, on bool, models []catalog.Model, gw string) ([]dshItem, error) {
-	i := dshFindLast(items, dshPiRow)
+	i := dshConfigIndex(items, dshPiRow)
+	if i < 0 {
+		i = dshFindLast(items, dshPiRow)
+	}
 	if i < 0 && !on {
 		return items, nil
 	}
@@ -1172,7 +1214,7 @@ func dshSync(dir, gw string) error {
 	if err := dshFillNewProfiles(files, models, gw); err != nil {
 		return err
 	}
-	return dshMirrorHome(dir, models, gw)
+	return dshMirrorHome(dir, models, gw, false)
 }
 
 // dshRouteAgain writes magpie's route again in one patch list where it is no
@@ -1196,7 +1238,7 @@ func dshRouteAgain(f string, models []catalog.Model, gw string) (bool, error) {
 	if err != nil || !dshWired(items) {
 		return false, nil
 	}
-	i := dshFindLast(items, dshPiRow)
+	i := dshConfigIndex(items, dshPiRow)
 	before := strings.Join(items[i].lines, "\n")
 	if items, err = dshPutRoute(items, true, models, gw); err != nil {
 		return false, nil
@@ -1472,6 +1514,9 @@ func dshSetEffort(dir, v, gw string) error {
 	defer dshWrites.Unlock()
 	files := dshProfiles(dir)
 	if len(files) > 0 {
+		if dshHomeHas(dir, "agent-default-model") {
+			files = append(files, dshHomePatch(dir))
+		}
 		model := dshGet(dir)
 		ref, viaGateway := strings.CutPrefix(model, magpieID+"/")
 		levels := dshEfforts
@@ -1500,12 +1545,15 @@ func dshSetEffort(dir, v, gw string) error {
 			if viaGateway {
 				p = dshRoute
 			}
-			if i := dshFindLast(items, "agent-default-model"); i >= 0 {
+			if i := dshConfigIndex(items, "agent-default-model"); i >= 0 {
 				if c := dshConfig(items[i]); c["model"] != "" && c["provider"] != "" {
 					p, m = c["provider"], c["model"]
 				}
 			}
-			i := dshFind(items, "agent-default-model")
+			i := dshConfigIndex(items, "agent-default-model")
+			if i < 0 {
+				i = dshFindLast(items, "agent-default-model")
+			}
 			if i >= 0 && !dshOurs(items[i]) {
 				stash(map[string]string{dshStashKey(f, "agent-default-model"): strings.Join(items[i].lines, "\n")})
 			}
@@ -1519,7 +1567,7 @@ func dshSetEffort(dir, v, gw string) error {
 				return err
 			}
 		}
-		return dshMirrorHome(dir, magpieModels("dsh"), gw)
+		return nil
 	}
 
 	if v != "" && !contains(dshEfforts, v) {

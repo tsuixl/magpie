@@ -99,6 +99,12 @@ jobs:
         if: runner.os == 'Windows'
         run: go test -v -count=1 ./internal/sessions -run '^Test(WindowsSession|Move|CopyAll)'
 
+      # dsh's layered config is read and edited in temporary homes. Run
+      # these checks on Windows too, including Desktop's home patch layer.
+      - name: Windows dsh configuration
+        if: runner.os == 'Windows'
+        run: go test -v -count=1 ./internal/agent -run '^Test(Dsh|KeepDsh)'
+
   cli:
     name: cli (${{ matrix.goos }}/${{ matrix.goarch }}, nogui)
     strategy:
