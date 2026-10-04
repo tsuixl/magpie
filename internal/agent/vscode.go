@@ -89,7 +89,7 @@ func vscodeAt(dir string) *Agent {
 		return edit.DelJSON(path, vscodeDefault)
 	}
 	return atomic(&Agent{
-		ID: "vscode", Name: "VS Code", Icon: "vscode", Aliases: []string{"vs-code", "copilot-chat", "vscode-chat"},
+		ID: "vscode", Name: "VS Code", Icon: "vscode", Aliases: []string{"vs-code", "copilot-chat", "vscode-chat"}, Spelled: prefixed,
 		Bin: "code", Dir: dir, Path: path,
 		UA: []string{vscodeUA},
 		Notice: func() string {

@@ -108,7 +108,7 @@ func atomcode(home string) *Agent {
 		return edit.SetTOMLTablesMatching(path, atomcodeAccountNames, atomcodeTablePrefixes, nil)
 	}
 	return atomic(&Agent{
-		ID: "atomcode", Name: "AtomCode", Icon: "atomcode",
+		ID: "atomcode", Name: "AtomCode", Icon: "atomcode", Spelled: prefixed,
 		UA:  []string{"atomcode"},
 		Bin: "atomcode", Dir: dir, Path: path,
 		Sync: func() error {

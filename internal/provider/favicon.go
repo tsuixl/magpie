@@ -1,15 +1,22 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"encoding/xml"
 	"errors"
+	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // FaviconFor finds the site behind a provider's base URL and keeps its icon
@@ -18,12 +25,19 @@ import (
 // since an API host seldom has a page of its own. On each, the home page's
 // <link rel="icon"> pictures come before /favicon.ico. Only public https
 // hosts are reached, as for an import link's icon.
-func FaviconFor(ctx context.Context, base string) (string, error) {
+//
+// A new-api or one-api site names its logo only in /api/status, which its
+// page's script reads to set the tab's icon; the page itself names none, or
+// the panel's own /logo.png, and its /favicon.ico is the panel's too, the
+// same on every such site (wiixdede on X: every relay got new-api's icon).
+// Its logo is taken from there, or one its page was given by hand, and one
+// with neither gets name's first letters on a tile.
+func FaviconFor(ctx context.Context, base, name string) (string, error) {
 	sites, err := faviconSites(base)
 	if err != nil {
 		return "", err
 	}
-	return favicon(ctx, guardClient(), sites, iconURL)
+	return favicon(ctx, guardClient(), sites, name, iconURL)
 }
 
 // faviconSites are the https origins to look on for base's icon: its host
@@ -52,12 +66,27 @@ func faviconSites(base string) ([]string, error) {
 
 // favicon tries each site in turn; check vets a picture's URL before it is
 // fetched (iconURL; tests pass one that lets a local server through).
-func favicon(ctx context.Context, c *http.Client, sites []string, check func(string) (string, error)) (string, error) {
+func favicon(ctx context.Context, c *http.Client, sites []string, name string, check func(string) (string, error)) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var last error
 	for _, site := range sites {
-		cands := append(pageIcons(ctx, c, site), site+"/favicon.ico")
+		panel, logo, sysName := statusLogo(ctx, c, site)
+		var cands []string
+		if !panel {
+			cands = append(pageIcons(ctx, c, site), site+"/favicon.ico")
+		} else {
+			// the logo it names, then one its page was given by hand: never
+			// the panel's own, which every such site has
+			if logo != "" {
+				cands = append(cands, logo)
+			}
+			for _, cand := range pageIcons(ctx, c, site) {
+				if p := strings.TrimPrefix(cand, site); p != "/favicon.ico" && p != "/logo.png" {
+					cands = append(cands, cand)
+				}
+			}
+		}
 		for _, cand := range cands {
 			if data, ok := strings.CutPrefix(cand, "data:"); ok {
 				if b := dataURI(data); b != nil {
@@ -78,6 +107,10 @@ func favicon(ctx context.Context, c *http.Client, sites []string, check func(str
 			}
 			last = err
 		}
+		if panel {
+			// the panel's own icon would look like every other relay's
+			return letterIcon(cmp.Or(strings.TrimSpace(name), panelName(sysName), siteLabel(site)))
+		}
 		if ctx.Err() != nil {
 			break
 		}
@@ -86,6 +119,105 @@ func favicon(ctx context.Context, c *http.Client, sites []string, check func(str
 		last = errors.New("no icon found")
 	}
 	return "", errorf("couldn't find the site's icon (%s): %v", strings.Join(sites, ", "), last)
+}
+
+// statusLogo asks site's /api/status, where a new-api or one-api panel
+// keeps its name and logo: panel is whether it answered as one, logo the
+// picture's URL (or data: URI) when it has one of its own.
+func statusLogo(ctx context.Context, c *http.Client, site string) (panel bool, logo, name string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, site+"/api/status", nil)
+	if err != nil {
+		return false, "", ""
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", iconUA)
+	res, err := c.Do(req)
+	if err != nil {
+		return false, "", ""
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return false, "", ""
+	}
+	var st struct {
+		Success bool
+		Data    struct {
+			SystemName *string `json:"system_name"`
+			Logo       string
+		}
+	}
+	if json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&st) != nil || !st.Success || st.Data.SystemName == nil {
+		return false, "", ""
+	}
+	logo = strings.TrimSpace(st.Data.Logo)
+	if logo != "" && !strings.HasPrefix(logo, "data:") {
+		ref, err := url.Parse(logo)
+		if err != nil {
+			logo = ""
+		} else {
+			logo = res.Request.URL.ResolveReference(ref).String()
+		}
+	}
+	return true, logo, *st.Data.SystemName
+}
+
+// panelName is a panel's own name, unless it is still the panel's default.
+func panelName(s string) string {
+	s = strings.TrimSpace(s)
+	switch strings.ToLower(strings.ReplaceAll(s, " ", "")) {
+	case "newapi", "oneapi":
+		return ""
+	}
+	return s
+}
+
+// siteLabel is the name a site's domain gives it: relay for api.relay.com.
+func siteLabel(site string) string {
+	u, err := url.Parse(site)
+	if err != nil {
+		return "?"
+	}
+	labels := strings.Split(u.Hostname(), ".")
+	if len(labels) >= 2 {
+		return labels[len(labels)-2]
+	}
+	return labels[0]
+}
+
+// letterIcon keeps a tile with name's first letters on it, its colour
+// picked by the name, so providers with no picture of their own still look
+// apart: one character for a CJK name, else the first letters of its first
+// two words, or of its one word.
+func letterIcon(name string) (string, error) {
+	words := strings.FieldsFunc(name, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	if len(words) == 0 {
+		words = []string{"?"}
+	}
+	first := []rune(words[0])
+	var mark string
+	switch {
+	case unicode.In(first[0], unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul):
+		mark = string(first[0])
+	case len(words) > 1:
+		mark = strings.ToUpper(string(first[0]) + string([]rune(words[1])[0]))
+	case len(first) > 1:
+		mark = strings.ToUpper(string(first[0])) + strings.ToLower(string(first[1]))
+	default:
+		mark = strings.ToUpper(string(first[0]))
+	}
+	size := 26
+	if utf8.RuneCountInString(mark) == 1 {
+		size = 32
+	}
+	h := fnv.New32a()
+	h.Write([]byte(name))
+	var text strings.Builder
+	xml.EscapeText(&text, []byte(mark))
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">`+
+		`<rect width="64" height="64" rx="14" fill="hsl(%d,52%%,46%%)"/>`+
+		`<text x="32" y="32" dy=".35em" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="%d" font-weight="600" fill="#fff">%s</text></svg>`,
+		h.Sum32()%360, size, text.String())
+	return StoreIcon([]byte(svg))
 }
 
 // iconUA names magpie to the sites icons are fetched from: some (deepseek.com)

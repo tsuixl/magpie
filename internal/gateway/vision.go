@@ -15,7 +15,6 @@ import (
 
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/provider"
-	"github.com/yetone/magpie/internal/settings"
 )
 
 // A model that can't see images is given what a model that can says of
@@ -96,7 +95,7 @@ func blindTo(pid, model string, in *bool) bool {
 // seer is the model that describes images: the Settings' Vision while it
 // resolves, else AutoVision's. None when Vision is off or no model sees.
 func seer() (string, bool) {
-	switch v := settings.Load().Vision; v {
+	switch v := provider.HeldSettings().Vision; v {
 	case "off":
 		return "", false
 	case "":

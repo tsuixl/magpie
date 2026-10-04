@@ -994,7 +994,13 @@
     body.append(card);
 
     const rh = el("div", "row-head");
-    rh.append(el("span", "label", t("Agents")), el("span", "grow"), el("span", "note", t("magpie writes its part between two marker lines — the rest of each file stays yours")));
+    // which set the agents switched on read, said where they're switched
+    // on (Fate: a set made and written was read by none, the Default being
+    // the one in use)
+    const inUse = (iv.sets || []).find((x) => x.active) || (iv.sets || [])[0];
+    rh.append(el("span", "label", t("Agents")));
+    if (inUse) rh.append(el("span", "note lib-reads", t("They read {name}", { name: setName(inUse) }) + ((inUse.text || "").trim() ? "" : " · " + t("Empty"))));
+    rh.append(el("span", "grow"), el("span", "note", t("magpie writes its part between two marker lines — the rest of each file stays yours")));
     body.append(rh);
     const list = el("div", "list lib-list");
     // a hidden agent still reading them is listed, to switch it off (#475)
@@ -1056,8 +1062,9 @@
     ta.onkeydown = (e) => { e.stopPropagation(); if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); saveInstructions(); } };
     autosize(ta, 150);
     det.append(nm, ta);
+    const acts = el("div", "lib-acts");
+    if (!x.active) acts.append(button(t("Switch the agents to this set"), "action lib-use", () => pick.onclick({ stopPropagation() {} })));
     if (x.id !== "default") {
-      const acts = el("div", "lib-acts");
       // its text goes with it, so a second click says so and does it
       const sure = removingSet === x.id;
       const rm = button(sure ? t("Remove {name} and its text", { name: setName(x) }) : t("Remove"), sure ? "primary danger-fill" : "action danger", () => {
@@ -1070,8 +1077,8 @@
       if (x.active) { rm.disabled = true; rm.title = t("Switch the agents to another set before removing this one"); }
       acts.append(rm);
       if (sure) acts.append(button(t("Cancel"), "", () => { removingSet = null; render(); }));
-      det.append(acts);
     }
+    if (acts.childElementCount) det.append(acts);
     det.onclick = (e) => e.stopPropagation();
     return [row, det];
   }
@@ -1085,7 +1092,11 @@
       const name = nm.value.trim();
       if (!name) return;
       const id = "s" + Date.now().toString(36);
-      if (await change("instructions/save", { create: { id, name } }, t("{name} added — switch the agents to it when it's ready", { name }))) {
+      // the set in use empty, the new one is read from then on (as the
+      // library does it)
+      const inUse = (iv().sets || []).find((x) => x.active);
+      const said = !inUse || (inUse.text || "").trim() ? t("{name} added — switch the agents to it when it's ready", { name }) : t("{name} added — the agents read it", { name });
+      if (await change("instructions/save", { create: { id, name } }, said)) {
         addingSet = false;
         openSet = id;
         render();
@@ -1119,7 +1130,12 @@
       const agents = lib.instructions.agents.filter((x) => (x.agent === a.agent ? on : x.on)).map((x) => x.agent);
       let done = t("Taken out of {agent}'s file", { agent: a.name });
       if (on && dirty()) done = t("{agent} is on — save to write the new text into its file", { agent: a.name });
-      else if (on && !iv().shared.trim() && !(a.extra || "").trim()) done = t("{agent} is on — it gets the shared instructions once there are some", { agent: a.name });
+      else if (on && !iv().shared.trim() && !(a.extra || "").trim()) {
+        const sets = iv().sets || [], inUse = sets.find((x) => x.active) || sets[0];
+        done = inUse && sets.some((x) => (x.text || "").trim())
+          ? t("{agent} is on, but it reads {name}, which is empty — switch the agents to the set they should read", { agent: a.name, name: setName(inUse) })
+          : t("{agent} is on — it gets the shared instructions once there are some", { agent: a.name });
+      }
       else if (on) done = t("{agent} reads the shared instructions now", { agent: a.name });
       change("instructions/save", { agents }, done);
     }), chev);
@@ -1783,6 +1799,7 @@
   // skills draws a few rows now and then instead of laying out and painting
   // each as it comes into view.
   let picking = false;         // the skills' rows have a box each, to pick some (#791)
+  let naming = false;          // the pick bar asks the name of a group to put them in
   const picked = new Set();    // the names picked
   let skillQuery = "";         // what the filter over the skills holds
   let skillTimer = 0;          // the filter's redraw, waiting for typing to pause
@@ -1814,34 +1831,45 @@
       grouped = { lib, pick, groups: [g] };
       return grouped.groups;
     }
+    // the user's own groups first, in the order made, each skill in its
+    // group rather than its source's (#791)
+    const mine = (lib.skillGroups || []).map((u) => ({ key: "my:" + u.name, repo: "", mine: u.name, skills: [], names: u.skills }));
+    const inMine = new Map();
+    for (const g of mine) for (const n of g.names) inMine.set(n, g);
     const by = new Map();
     for (const s of lib.skills) {
+      const own = inMine.get(s.name);
+      if (own) { own.skills.push(s); continue; }
       const repo = s.kind === "github" ? repoOf(s.source) : s.origin ? repoOf(s.origin) : "";
       const key = repo ? "gh:" + repo.toLowerCase() : "local";
       let g = by.get(key);
       if (!g) by.set(key, (g = { key, repo, skills: [] }));
       g.skills.push(s);
     }
-    const groups = [...by.values()].sort((a, b) => (a.key === "local") - (b.key === "local") || a.repo.localeCompare(b.repo));
+    const groups = [...mine.filter((g) => g.skills.length),
+      ...[...by.values()].sort((a, b) => (a.key === "local") - (b.key === "local") || a.repo.localeCompare(b.repo))];
     for (const g of groups) {
       g.skills.sort((a, b) => a.name.localeCompare(b.name));
-      g.text = new Map(g.skills.map((s) => [s, (s.name + " " + (s.description || "") + " " + g.repo).toLowerCase()]));
-      g.parts = partsOf(g);
+      g.text = new Map(g.skills.map((s) => [s, (s.name + " " + (s.description || "") + " " + (g.mine || g.repo)).toLowerCase()]));
+      g.parts = g.mine ? null : partsOf(g);
     }
     grouped = { lib, pick, groups };
     return groups;
   }
 
-  // A big group's parts: by the folder its skills sit in — in the
-  // repository, or on this computer — when they sit in more than one;
-  // else by the start their names share ("gh-review", "gh-triage" → gh),
-  // a start three or more share being a part and the rest one more.
+  // A big group's parts. A repository's: by the folder its skills sit in
+  // there when they sit in more than one, else by the start their names
+  // share ("gh-review", "gh-triage" → gh), a start three or more share
+  // being a part and the rest one more. On this computer the start comes
+  // first (#791, mintonight: lark-* among skills in two folders, or a few
+  // lark-* among many, had no part of their own), since the folder there
+  // is only where an installer put a skill, and the rest go by folder.
   // Nothing is fetched: it's all in where each skill came from.
   function partsOf(g) {
     if (g.skills.length <= SPLIT) return null;
-    const split = (keyOf) => {
+    const split = (skills, keyOf) => {
       const m = new Map();
-      for (const s of g.skills) {
+      for (const s of skills) {
         const k = keyOf(s);
         if (!m.has(k)) m.set(k, []);
         m.get(k).push(s);
@@ -1857,9 +1885,7 @@
       if (s.kind === "folder") return tilde((s.source || "").replace(/[\\/][^\\/]+[\\/]?$/, ""));
       return "";
     };
-    let m = split(folderIn), mono = true;
-    if (!m) {
-      mono = false;
+    const byStart = () => {
       const segs = (s) => s.name.toLowerCase().split(/[-_:.\s]+/).filter(Boolean);
       // a start every name has says nothing: the part after it does
       const all = g.skills.map(segs);
@@ -1867,13 +1893,24 @@
       while (all.every((x) => x.length > skip + 1 && x[skip] === all[0][skip])) skip++;
       const lead = new Map();
       for (const x of all) if (x.length > skip + 1) lead.set(x[skip], (lead.get(x[skip]) || 0) + 1);
-      m = split((s) => { const x = segs(s); const k = x.length > skip + 1 ? x[skip] : ""; return lead.get(k) >= 3 ? k : ""; });
-      if (m && m.size === 2 && m.has("") && m.get("").length > g.skills.length * 0.8) m = null; // one small part and the rest
+      return split(g.skills, (s) => { const x = segs(s); const k = x.length > skip + 1 ? x[skip] : ""; return lead.get(k) >= 3 ? k : ""; });
+    };
+    const label = (key, mono) => key || (mono ? (g.repo ? t("At the top of the repository") : t("Kept in the library")) : t("Others"));
+    const order = (a, b) => (!a.key) - (!b.key) || a.mono - b.mono || a.key.localeCompare(b.key);
+    if (g.repo) {
+      let m = split(g.skills, folderIn), mono = true;
+      if (!m) { mono = false; m = byStart(); }
+      if (!m) return null;
+      return [...m].map(([key, skills]) => ({ key, skills, mono, label: label(key, mono) })).sort(order);
     }
-    if (!m) return null;
-    return [...m].map(([key, skills]) => ({ key, skills, mono,
-      label: key || (mono ? (g.repo ? t("At the top of the repository") : t("Kept in the library")) : t("Others")) }))
-      .sort((a, b) => (!a.key) - (!b.key) || a.key.localeCompare(b.key));
+    const starts = byStart();
+    const named = starts ? [...starts].filter(([k]) => k) : [];
+    const rest = starts ? starts.get("") || [] : g.skills;
+    const folders = split(rest, folderIn);
+    const parts = named.map(([key, skills]) => ({ key, skills, mono: false, label: key }));
+    if (folders) for (const [key, skills] of folders) parts.push({ key: "dir:" + key, skills, mono: true, label: label(key, true) });
+    else if (rest.length) parts.push({ key: "", skills: rest, mono: false, label: label("", false) });
+    return parts.length > 1 ? parts.sort(order) : null;
   }
 
   function skillFilter(box, all) {
@@ -1988,7 +2025,9 @@
     card.dataset.group = g.key;
     const head = el("div", "row lib-row click lib-grouphead" + (folded ? "" : " open"));
     const who = el("div", "who");
-    who.append(el("div", "name" + (g.repo ? " mono" : ""), g.repo || t("On this computer")));
+    const title = g.mine || g.repo || t("On this computer");
+    const name = el("div", "name" + (g.repo ? " mono" : ""), title);
+    who.append(name);
     const n = g.skills.length;
     who.append(el("div", "sub", filtering && hits.length !== n ? t("{n} of {total} skills", { n: hits.length, total: n })
       : n === 1 ? t("1 skill") : t("{n} skills", { n })));
@@ -2003,8 +2042,17 @@
       u.title = stale.length === 1 ? t("Fetch {name} from GitHub again", { name: stale[0].name }) : t("Fetch the {n} skills GitHub changed again", { n: stale.length });
       tags.append(u);
     }
-    const have = groupChips(g.skills, all, g.repo || t("On this computer"));
+    const have = groupChips(g.skills, all, title);
     const acts = el("div", "lib-rowacts");
+    // a group of the user's is renamed in place, or let go: its skills go
+    // back to their sources' groups, and stay in the library as they are
+    if (g.mine) {
+      const rn = button(t("Rename"), "lib-updall lib-grouprename", () => renameGroup(g, name));
+      rn.title = t("Rename this group");
+      const un = button(t("Ungroup"), "lib-updall lib-ungroup", () => ungroup(g.mine, null));
+      un.title = t("Let this group go: its skills go back to where they came from, and stay as they are");
+      tags.append(rn, un);
+    }
     if (g.repo) {
       const o = button("", "lib-icon", () => browse("https://github.com/" + g.repo));
       o.append(svg(GLYPH.out, 13, 1.4));
@@ -2013,7 +2061,7 @@
     }
     const chev = el("span", "chev");
     chev.append(svg(CHEV_R, 11, 1.7));
-    const pic = g.repo ? mark(g.skills.find((s) => s.icon)?.icon, GLYPH.skill) : glyph(GLYPH.folder);
+    const pic = g.repo ? mark(g.skills.find((s) => s.icon)?.icon, GLYPH.skill) : glyph(g.mine ? GLYPH.skill : GLYPH.folder);
     if (picking) head.append(pickAll(hits));
     head.append(pic, who, tags, have, acts, chev);
     head.title = folded ? t("Show its skills") : t("Hide its skills");
@@ -2118,6 +2166,7 @@
   }
   // every box drawn, and the bar, as the picks are now
   function syncPicks() {
+    if (!picked.size) naming = false;
     for (const b of page.querySelectorAll(".lib-pickbox")) paintPick(b);
     const bar = page.querySelector(".lib-pickbar");
     if (bar) bar.replaceWith(pickBar(skillAgents()));
@@ -2132,14 +2181,129 @@
     const skills = lib.skills.filter((s) => picked.has(s.name));
     const n = skills.length;
     bar.append(every, el("span", "lib-pickn" + (n ? "" : " none"), n ? t("{n} selected", { n }) : t("Pick skills to turn them on or off together")), el("span", "grow"));
+    if (n && naming) return nameBar(bar, skills);
     if (n) {
       bar.append(groupChips(skills, all, null));
+      // a group of the user's made of them, or the ones in one let go (#791)
+      if (sortOf("libSkills", SKILL_SORTS()) === "source") {
+        const gb = button(t("Group…"), "lib-updall lib-pickgroup", () => { naming = true; syncPicks(); });
+        gb.title = t("Put the skills picked in a group of your own");
+        bar.append(gb);
+        const own = (lib.skillGroups || []).filter((u) => u.skills.some((x) => picked.has(x)));
+        if (own.length) {
+          const ub = button(t("Ungroup"), "lib-updall lib-pickungroup", async () => {
+            for (const u of own) await ungroup(u.name, u.skills.filter((x) => picked.has(x)));
+          });
+          ub.title = t("Take the skills picked out of their groups");
+          bar.append(ub);
+        }
+      }
       const c = button(t("Clear"), "lib-updall lib-pickclear", () => { picked.clear(); syncPicks(); });
       c.title = t("Unpick them all");
       bar.append(c);
     }
     bar.append(button(t("Done"), "action lib-updall lib-pickdone", () => { picking = false; picked.clear(); render(); }));
     return bar;
+  }
+
+  // The bar asking a group's name for the skills picked: a new group's, or
+  // one there is, which they join. Enter makes it, Escape goes back.
+  function nameBar(bar, skills) {
+    bar.classList.add("naming");
+    const f = el("input", "lib-filter lib-groupname");
+    f.placeholder = t("Group name");
+    f.spellcheck = false;
+    f.autocomplete = "off";
+    const have = (lib.skillGroups || []).map((u) => u.name);
+    const go = button(t("Group"), "action lib-updall lib-groupgo", () => makeGroup(f.value, skills));
+    const sync = () => {
+      const v = f.value.trim();
+      go.disabled = !v;
+      go.textContent = have.includes(v) ? t("Add to {name}", { name: v }) : t("Group");
+    };
+    f.oninput = sync;
+    f.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" && f.value.trim()) { e.preventDefault(); makeGroup(f.value, skills); }
+      if (e.key === "Escape") { e.preventDefault(); naming = false; syncPicks(); }
+    };
+    sync();
+    const back = button(t("Cancel"), "lib-updall lib-groupcancel", () => { naming = false; syncPicks(); });
+    bar.append(el("span", "lib-pickn", skills.length === 1 ? t("Group 1 skill as") : t("Group {n} skills as", { n: skills.length })), f);
+    // a group there is, to put them in with a click
+    for (const h of have.slice(0, 4)) {
+      const b = button(h, "lib-updall lib-groupto", () => makeGroup(h, skills));
+      b.title = t("Add them to {name}", { name: h });
+      bar.append(b);
+    }
+    bar.append(el("span", "grow"), back, go);
+    requestAnimationFrame(() => f.focus({ preventScroll: true }));
+    return bar;
+  }
+
+  async function makeGroup(name, skills) {
+    name = name.trim();
+    if (!name) return;
+    try {
+      const v = await api("library/skills/group", { name, names: skills.map((s) => s.name) });
+      take(v);
+      folds["my:" + name] = false; // a group just made is shown open
+      saveFolds();
+      picking = false;
+      naming = false;
+      picked.clear();
+      report(v.result, skills.length === 1 ? t("{skill} is in {name}", { skill: skills[0].name, name }) : t("{n} skills are in {name}", { n: skills.length, name }));
+    } catch (e) {
+      status(e.message, "err", 6000);
+    }
+    render();
+  }
+
+  // a group of the user's let go, or only the skills named out of it
+  async function ungroup(name, names) {
+    try {
+      const v = await api("library/skills/ungroup", { name, names: names || [] });
+      take(v);
+      if (names) for (const n of names) picked.delete(n);
+      report(v.result, names ? t("{n} skills are out of {name}", { n: names.length, name }) : t("{name} is no longer a group", { name }));
+    } catch (e) {
+      status(e.message, "err", 6000);
+    }
+    render();
+  }
+
+  // a group's name, made a box to type its new one in
+  function renameGroup(g, name) {
+    const f = el("input", "lib-filter lib-grouprename-in");
+    f.value = g.mine;
+    f.spellcheck = false;
+    f.autocomplete = "off";
+    let done = false;
+    const save = async () => {
+      if (done) return;
+      done = true;
+      const to = f.value.trim();
+      if (!to || to === g.mine) { render(); return; }
+      try {
+        const v = await api("library/skills/group", { old: g.mine, name: to, names: [] });
+        take(v);
+        if (g.key in folds) { folds["my:" + to] = folds[g.key]; delete folds[g.key]; saveFolds(); }
+        report(v.result, t("{old} is now {name}", { old: g.mine, name: to }));
+      } catch (e) {
+        status(e.message, "err", 6000);
+      }
+      render();
+    };
+    f.onclick = (e) => e.stopPropagation();
+    f.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") { e.preventDefault(); save(); }
+      if (e.key === "Escape") { e.preventDefault(); done = true; render(); }
+    };
+    f.onblur = save;
+    name.replaceWith(f);
+    f.focus({ preventScroll: true });
+    f.select();
   }
 
   // ---------- a long list, drawn near the view first ----------

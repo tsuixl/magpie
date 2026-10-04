@@ -205,6 +205,14 @@ func targetOf(a *agent.Agent) *Target {
 		} else {
 			t.Skills = sharedSkillsDir()
 		}
+	case "alma":
+		// Alma reads personal skills from ~/.config/alma/skills, on every
+		// system (its home, not its data folder), and Claude Code's, Codex's
+		// and ~/.agents/skills besides (its skills service, #824); it has
+		// no user-wide instructions file or MCP file of the kind magpie
+		// writes, its prompts being its settings' own
+		t.Skills = filepath.Join(h, ".config", "alma", "skills")
+		t.SkillsAlso = []string{"claude", "codex"}
 	case "cindy":
 		// Cindy keeps its user-wide skills in ~/.agents/skills
 		t.Skills = sharedSkillsDir()
@@ -385,7 +393,7 @@ func Targets() []*Target {
 
 // readsShared are the agents that read ~/.agents/skills as well as their
 // own folder (each one's docs or source).
-var readsShared = []string{"codex", "gemini", "opencode", "crush", "dsh", "commandcode", "devin", "droid", "cline", "grok", "fx"}
+var readsShared = []string{"codex", "gemini", "opencode", "crush", "dsh", "commandcode", "devin", "droid", "cline", "grok", "fx", "alma"}
 
 // readsWith adds to each agent's SkillsAlso the agents whose folder it
 // reads skills from too: one that is the very same folder (Kimi Code's,

@@ -76,7 +76,7 @@ func miniMaxAt(at place, dir string) *Agent {
 		return edit.SetYAML(path, kvs...)
 	}
 	return atomic(&Agent{
-		ID: "minimax-code", Name: "MiniMax Code", Icon: "minimax-color", Aliases: []string{"mcode"},
+		ID: "minimax-code", Name: "MiniMax Code", Icon: "minimax-color", Aliases: []string{"mcode"}, Spelled: prefixed,
 		UA:  []string{mcodeUA},
 		Bin: "mcode", Dir: dir, Path: path,
 		Sync: func() error {

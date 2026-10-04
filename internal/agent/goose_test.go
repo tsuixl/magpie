@@ -14,7 +14,35 @@ import (
 	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/testenv"
 )
+
+// Unexpanded folder variables must not send a config write into ./~/….
+func TestGooseIgnoresTildeConfigHome(t *testing.T) {
+	home := t.TempDir()
+	testenv.SetHome(t, home)
+	work := t.TempDir()
+	t.Chdir(work)
+	t.Setenv("XDG_CONFIG_HOME", "~/.config")
+	t.Setenv("APPDATA", "~/AppData/Roaming")
+	a, err := Find("goose")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".config", "goose", "config.yaml")
+	if a.Path != want {
+		t.Errorf("Goose path = %q, want %q", a.Path, want)
+	}
+	if err := a.Field("effort").Set("high"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := edit.GetYAMLTop(want, "GOOSE_THINKING_EFFORT"); got != "high" {
+		t.Errorf("effort at %s = %q, want high", want, got)
+	}
+	if entries, err := os.ReadDir(work); err != nil || len(entries) != 0 {
+		t.Errorf("working directory changed: %v, %v", entries, err)
+	}
+}
 
 // A goose on PATH that is pressly's migration tool (a Go program) is not the
 // Goose agent (Discord: Jun, goose shown without ~/.config/goose); Block's

@@ -72,4 +72,16 @@ func TestCursorLocalModels(t *testing.T) {
 			}
 		}
 	}
+
+	// the models picked on its row are its picker's: one taken out isn't
+	// listed with its key, and still is for another agent's
+	if err := provider.SetHiddenModels("cursor-local", []string{"ds/flash"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := list(TokenFor("cursor-local")); got["ds/flash"] != nil || got["fake/m1"] == nil {
+		t.Errorf("with ds/flash taken out: %v", got)
+	}
+	if got := list(TokenFor("opencode")); got["ds/flash"] == nil {
+		t.Errorf("taken out of another agent's list: %v", got)
+	}
 }

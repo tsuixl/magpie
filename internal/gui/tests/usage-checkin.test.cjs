@@ -11,8 +11,9 @@
 // Clicks never move the page. A Trae CN account's card (Hu9956: TRAE cn
 // 也有每天签到送100积分) has the same row, with its own switch
 // (POST /api/settings/trae-checkin) and press (POST /api/usage/trae-checkin),
-// the WorkBuddy one left as it was. English and Chinese; the API is faked
-// here.
+// the WorkBuddy one left as it was; so has a MiniMax Code account's (#811,
+// POST /api/settings/minimax-checkin and /api/usage/minimax-checkin).
+// English and Chinese; the API is faked here.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -31,10 +32,12 @@ const quotas = () => [
   { provider: "codex", name: "Codex", icon: "openai", plan: "Plus", windows: [{ name: "5 hours", used: 20 }] },
   { provider: "trae-cn", name: "Trae CN", plan: "Free", user: "hu", windows: [{ name: "Credits", used: 3 }],
     checkins: true, checkinBy: "trae", checkin: { user: "hu", day: "2026-09-30", outcome: "claimed", credit: 100 } },
+  { provider: "minimax-code", name: "MiniMax Code", plan: "Plus", user: "mm", windows: [{ name: "5 hours", used: 10 }],
+    checkins: true, checkinBy: "minimax", checkin: { user: "mm", day: "2026-10-04", outcome: "claimed", credit: 800, streak: 1 } },
 ];
 
 function serve(lang, asked) {
-  const settings = { theme: "light", lang, quotaLeft: false, currency: "usd", workbuddyCheckin: false, traeCheckin: false };
+  const settings = { theme: "light", lang, quotaLeft: false, currency: "usd", workbuddyCheckin: false, traeCheckin: false, minimaxCheckin: false };
   return async (route) => {
     const url = new URL(route.request().url());
     const json = (data) => route.fulfill({ json: data });
@@ -55,6 +58,15 @@ function serve(lang, asked) {
     if (url.pathname === "/api/usage/trae-checkin") {
       asked.push(["trae-now"]);
       return json([{ user: "hu", by: "trae", day: today, outcome: "claimed", credit: 100 }]);
+    }
+    if (url.pathname === "/api/settings/minimax-checkin") {
+      asked.push(["mm-set", route.request().postDataJSON()]);
+      settings.minimaxCheckin = route.request().postDataJSON().on;
+      return json(settings);
+    }
+    if (url.pathname === "/api/usage/minimax-checkin") {
+      asked.push(["mm-now"]);
+      return json([{ user: "mm", by: "minimax", day: today, outcome: "claimed", credit: 800, streak: 2 }]);
     }
     if (url.pathname === "/api/usage/workbuddy-checkin") {
       asked.push(["now"]);
@@ -141,7 +153,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal((await card.locator(".ci-say").innerText()).trim(), lang === "en" ? "Auto check-in is off · last checked in 2026-09-30" : "自动签到已关闭 · 上次签到于 2026-09-30");
       assert.match(await card.locator(".ci-say").getAttribute("title"), /Trae/);
       // its own switch and press, beside WorkBuddy's
-      assert.equal(await page.locator(".ci-auto").count(), 2);
+      assert.equal(await page.locator(".ci-auto").count(), 3);
       const auto = card.locator(".ci-auto");
       assert.equal((await auto.innerText()).trim(), w.auto);
       assert.match(await auto.getAttribute("title"), /Trae CN/);
@@ -157,6 +169,70 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await card.locator(".ci-now").click();
       await reread;
       assert.deepEqual(asked.slice(before), [["trae-now"]]);
+      assert.deepEqual(errors, []);
+    });
+
+    test(`${engine} ${lang}: the MiniMax Code card has its own check-in`, async (t) => {
+      const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+      t.after(() => browser.close());
+      const page = await (await browser.newContext({ viewport: { width: 900, height: 900 }, reducedMotion: "reduce" })).newPage();
+      page.setDefaultTimeout(5000);
+      const errors = [], asked = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.route("**/*", serve(lang, asked));
+      await page.goto("http://magpie.test/?view=usage");
+      const card = page.locator(".subscription-card", { hasText: "MiniMax Code" });
+      await card.locator(".wb-checkin").first().waitFor();
+      assert.equal(await card.locator(".wb-checkin").count(), 1);
+      assert.equal((await card.locator(".ci-say").innerText()).trim(), lang === "en" ? "Auto check-in is off · last checked in 2026-10-04" : "自动签到已关闭 · 上次签到于 2026-10-04");
+      assert.match(await card.locator(".ci-say").getAttribute("title"), /MiniMax Code/);
+      const auto = card.locator(".ci-auto");
+      assert.match(await auto.getAttribute("title"), /MiniMax Code/);
+      const y = await scrolls(page);
+      await auto.click();
+      await page.waitForFunction(() => document.querySelectorAll(".ci-auto[aria-pressed=true]").length === 1);
+      assert.equal(await auto.getAttribute("aria-pressed"), "true");
+      assert.deepEqual(asked, [["mm-set", { on: true }]]);
+      assert.equal(await scrolls(page), y, "the toggle moved the page");
+      assert.equal(await page.locator(".subscription-card", { hasText: "Trae CN" }).locator(".ci-auto").getAttribute("aria-pressed"), "false", "Trae's switch changed too");
+      const before = asked.length;
+      const reread = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/usage/quotas");
+      await card.locator(".ci-now").click();
+      await reread;
+      assert.deepEqual(asked.slice(before), [["mm-now"]]);
+      assert.deepEqual(errors, []);
+    });
+
+    test(`${engine} ${lang}: Settings has a MiniMax Code check-in tab`, async (t) => {
+      const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+      t.after(() => browser.close());
+      const page = await (await browser.newContext({ viewport: { width: 900, height: 900 }, reducedMotion: "reduce" })).newPage();
+      page.setDefaultTimeout(5000);
+      const errors = [], asked = [];
+      page.on("pageerror", (e) => errors.push(e.message));
+      await page.route("**/*", async (route) => {
+        const url = new URL(route.request().url());
+        const settings = { theme: "light", lang, minimax: true, minimaxCheckin: false,
+          minimaxCheckins: [{ user: "mm", by: "minimax", day: today, outcome: "claimed", credit: 800, streak: 2 }] };
+        if (url.pathname === "/api/state") return route.fulfill({ json: { agents: [], profiles: [], settings } });
+        if (url.pathname === "/api/settings" && route.request().method() === "POST") {
+          asked.push(route.request().postDataJSON().minimaxCheckin);
+          return route.fulfill({ json: { ...settings, minimaxCheckin: true } });
+        }
+        if (url.pathname === "/api/settings") return route.fulfill({ json: settings });
+        return serve(lang, [])(route);
+      });
+      await page.goto("http://magpie.test/?view=settings&tab=usage");
+      const tab = page.locator("#warmTab-minimax");
+      await tab.waitFor();
+      assert.equal(await tab.isHidden(), false);
+      await tab.click();
+      await page.locator("#minimaxList").waitFor();
+      assert.match(await page.locator("#minimaxCheckinSub").innerText(), /MiniMax Code/);
+      const saved = page.waitForRequest((r) => new URL(r.url()).pathname === "/api/settings" && r.method() === "POST");
+      await page.locator("#minimaxCheckinSegs button").nth(1).click();
+      await saved;
+      assert.deepEqual(asked, [true]);
       assert.deepEqual(errors, []);
     });
   }

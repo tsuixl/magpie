@@ -326,11 +326,19 @@ button.rt-session { cursor: pointer; }
 .rt-gfound .txt { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .rt-gfound b { font-size: 12.5px; font-weight: 600; }
 .rt-gfound small { font-size: 11.5px; line-height: 1.45; color: var(--muted); }
-.rt-ghidden { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 6px 12px 6px 14px; font-size: 11.5px; color: var(--faint); }
-.rt-ghidden > span { margin-right: 4px; }
+.rt-ghidden { display: flex; align-items: center; padding: 4px 12px 4px 8px; }
+.rt-ghidden .rt-gremoved { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--faint); }
+.rt-ghidden .rt-gremoved:hover, .rt-ghidden .rt-gremoved.open { color: var(--fg-2); }
+.rt-gsel { display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 14px; }
+.rt-gsel .rt-gremove.armed { font-weight: 600; }
+.rt-group.rt-gpick { cursor: default; }
+.rt-group.rt-gpick.on { background: var(--card-2); }
 .rt-gedit { cursor: default; }
 .rt-gedit .ehead.fold { cursor: pointer; }
 .rt-gedit .segs { max-width: 100%; }
+.rt-gedit .ctx-wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.rt-gedit .ctx-wrap .hint { flex-basis: 100%; }
+.rt-gedit .ctx-wrap input.ctx-in { width: 96px; flex: none; }
 .rt-pool { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 12px 10px 14px; }
 .rt-pool .nm { flex: 1 1 12em; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
 .rt-pool .nm .ic { width: 16px; height: 16px; }

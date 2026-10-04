@@ -89,6 +89,55 @@ func TestRelativeFolderVariablesIgnoredNotUnset(t *testing.T) {
 	}
 }
 
+// A literal tilde is relative too, unless the variable's readers expand it.
+func TestTildeFolderVariables(t *testing.T) {
+	t.Setenv(homeVar(), t.TempDir())
+	for _, tc := range []struct {
+		name, value string
+		keep        bool
+	}{
+		{"XDG_CONFIG_HOME", "~/.config", false},
+		{"XDG_CACHE_HOME", "~/.cache", false},
+		{"XDG_DATA_HOME", "~/.local/share", false},
+		{"XDG_STATE_HOME", "~/.local/state", false},
+		{"XDG_RUNTIME_DIR", "~/run", false},
+		{"APPDATA", "~/AppData/Roaming", false},
+		{"LOCALAPPDATA", "~/AppData/Local", false},
+		{"MAGPIE_BIN_DIR", "~/.local/bin", false},
+		{"CODEX_HOME", "~/.codex", false},
+		{"OPENCODE_CONFIG_DIR", "~/opencode", false},
+		{"OPENCHAMBER_DATA_DIR", "~", false},
+		{"PI_CODING_AGENT_DIR", "~/pi", true},
+		{"PI_CODING_AGENT_SESSION_DIR", "~/sessions", true},
+		{"HANA_HOME", "~", true},
+		{"T3CODE_HOME", "~/.t3", true},
+		{"HANA_HOME", "~other/hanako", false},
+		{"PI_CODING_AGENT_DIR", "~other/pi", false},
+		{"PI_CODING_AGENT_DIR", `~\pi`, runtime.GOOS == "windows"},
+	} {
+		t.Run(tc.name+"="+tc.value, func(t *testing.T) {
+			t.Setenv(tc.name, tc.value)
+			want := ""
+			if tc.keep {
+				want = tc.value
+			}
+			if got, ok := LookupEnv(tc.name); got != want || ok != tc.keep {
+				t.Errorf("LookupEnv(%s) = %q, %v; want %q, %v", tc.name, got, ok, want, tc.keep)
+			}
+			ignored, err := CheckEnv()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if slices.Contains(ignored, tc.name) == tc.keep {
+				t.Errorf("CheckEnv ignored %v; keep %s = %v", ignored, tc.name, tc.keep)
+			}
+			if got := os.Getenv(tc.name); got != tc.value {
+				t.Errorf("environment's %s = %q, want %q kept for children", tc.name, got, tc.value)
+			}
+		})
+	}
+}
+
 // On Windows a path rooted on the current drive is no working-folder path:
 // \Users\x and Git Bash's /c/x are kept.
 func TestRootedOnWindows(t *testing.T) {

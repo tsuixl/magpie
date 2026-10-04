@@ -32,6 +32,9 @@ type Library struct {
 	// Icons are the icons of the servers added from the market, by what
 	// each runs, for the page to show them by
 	Icons map[string]string `json:"icons,omitempty"`
+	// SkillGroups are the groups the user made of some skills on the
+	// page, each shown as a group of its own (#791)
+	SkillGroups []*SkillGroup `json:"skillGroups,omitempty"`
 	// kept is where a change put what it kept aside before the sync, for
 	// the sync to keep the agents' files beside it
 	kept *backups

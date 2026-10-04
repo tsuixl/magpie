@@ -22,8 +22,8 @@ const groupUsage = `usage:
                                           a name in use replaces that group
   magpie group set <id> k=v…              change one: name, models (the whole list, in order, patterns too),
                                           models+=<m>[,m2…] (append), models-=<m>[,m2…] (drop), routing, stays,
-                                          context (how long a request agents are told it takes: 272k; empty is
-                                          its largest model's), levels (the reasoning levels agents are offered:
+                                          context (how long a request agents are told it takes: 272k; smallest
+                                          is its smallest model's; empty is its largest model's), levels (the reasoning levels agents are offered:
                                           levels=none,low,medium,high,xhigh,max; empty is those every model has —
                                           a model without the one asked is sent its nearest),
                                           family (a tag: magpie visible shows agents families, not each group),
@@ -35,7 +35,7 @@ const groupUsage = `usage:
                                           fast=<m1>[,m2…] (the models sent in their vendor's fast mode; empty for none)
   magpie group pick <id> <model>          route the group manually, every request to that one of its models
                                           (as clicking it on the group's card in the Routing view does)
-  magpie group rm <id>                    remove a group (one magpie found is hidden instead)
+  magpie group rm <id>…                   remove groups (one magpie found is hidden instead)
   magpie group restore <id>               bring back a group magpie found that you removed
   magpie group auto [on|off]              whether magpie finds groups on its own (on by default); off, none is
                                           listed or served — yours, and found ones you changed, stay — and an
@@ -402,8 +402,12 @@ func applyGroupPairs(g *provider.Group, pairs []string, resolve func(string) (st
 		case "context":
 			// what agents are told the group takes; empty or 0 is its
 			// largest model's again
-			g.Context = 0
-			if strings.TrimSpace(v) != "" {
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "", "largest", "max":
+				g.Context = 0
+			case "smallest", "min":
+				g.Context = provider.ContextSmallest
+			default:
 				g.Context, err = parseTokens(v)
 			}
 		case "levels", "level":
@@ -555,17 +559,19 @@ func groupCmd(args []string) error {
 		fmt.Println(green.Render("✓"), "saved", bold.Render(g.Name))
 		return showGroup(g)
 	case "rm", "remove", "delete":
-		if len(rest) != 1 {
-			return fmt.Errorf("magpie group rm <id>")
+		if len(rest) < 1 {
+			return fmt.Errorf("magpie group rm <id>…")
 		}
-		g, err := removeGroup(rest[0])
+		gs, err := removeGroups(rest)
 		if err != nil {
 			return err
 		}
-		if g.Auto {
-			fmt.Println(green.Render("✓"), "removed", bold.Render(g.Name), muted.Render("· magpie found it, so it's hidden: magpie group restore "+g.ID+" brings it back"))
-		} else {
-			fmt.Println(green.Render("✓"), "removed", bold.Render(g.Name))
+		for _, g := range gs {
+			if g.Auto {
+				fmt.Println(green.Render("✓"), "removed", bold.Render(g.Name), muted.Render("· magpie found it, so it's hidden: magpie group restore "+g.ID+" brings it back"))
+			} else {
+				fmt.Println(green.Render("✓"), "removed", bold.Render(g.Name))
+			}
 		}
 		return nil
 	case "pick", "use":
@@ -691,6 +697,27 @@ func removedOnly(ref string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// removeGroups removes the groups refs name, all or none (lc on Discord).
+func removeGroups(refs []string) ([]provider.Group, error) {
+	if len(refs) == 1 {
+		g, err := removeGroup(refs[0])
+		return []provider.Group{g}, err
+	}
+	var gs []provider.Group
+	var ids []string
+	for _, ref := range refs {
+		g, err := findGroup(ref)
+		if err != nil {
+			return nil, err
+		}
+		if g.Hidden {
+			return nil, fmt.Errorf("%s is removed already; magpie group restore %s brings it back", g.ID, g.ID)
+		}
+		gs, ids = append(gs, g), append(ids, g.ID)
+	}
+	return gs, provider.DeleteGroups(ids)
 }
 
 func removeGroup(ref string) (provider.Group, error) {

@@ -98,7 +98,7 @@ func agy(home string) *Agent {
 		return edit.SetJSON(path, edit.KV{Path: key, Value: v})
 	}
 	return &Agent{
-		ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color", Aliases: []string{"antigravity-cli"},
+		ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color", Aliases: []string{"antigravity-cli"}, Spelled: prefixed,
 		Bin: "agy", Dir: dir, Path: path,
 		Launch: func() string {
 			if v := get(); usesMagpie(v) {

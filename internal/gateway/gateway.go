@@ -295,6 +295,9 @@ type Server struct {
 	debug        bool
 	trace        trace // what routing did with each request, for the Gateway view
 	titlePrompts titlePrompts
+	// codexTurns is the model each Codex last had a turn of its own
+	// answered on, by caller (codexMemoryStandIn)
+	codexTurns sync.Map
 	// the listener, swapped when the gateway is shared on the network or
 	// taken off it (see Relisten)
 	lnMu sync.Mutex
@@ -396,8 +399,9 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	go provider.KeepResetsFromRunningOut(ctx)
 	// and checks the WorkBuddy accounts in for the day's credits
 	go provider.KeepWorkBuddyCheckedIn(ctx)
-	// and the Trae CN accounts (#694)
+	// and the Trae CN accounts (#694), and the MiniMax Code ones (#811)
 	go provider.KeepTraeCheckedIn(ctx)
+	go provider.KeepMiniMaxCheckedIn(ctx)
 	// and moves the built-in subscriptions being retired onto their plugins
 	go provider.KeepRetiringMoved(ctx)
 	// and keeps the community's plugins up to date, noting others' updates, and the Bun they run on
@@ -1005,6 +1009,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// what the vendor saw and said
 	w, body, unmask := redacted(w, body)
 	defer unmask()
+	// the reply's model the member that answered, when asked for (#822)
+	w, r, named := withMemberNames(w, r)
+	defer named()
 	requestBody, requestTruncated := captureRequestBody(body)
 	// the OTLP export may want the bodies uncut (#538): the request is
 	// already whole in memory, so keep it as it came, and the reply goes to
@@ -1095,7 +1102,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	} else if m := standIn(agent, asked); m != "" {
 		asked = at(m)
 	}
+	if m := s.codexMemoryStandIn(r, call.Agent, agent, call.Kind, asked); m != "" {
+		asked = m
+	}
 	p, model, ok := provider.Resolve(asked)
+	if ok {
+		s.rememberCodexTurn(r, call.Agent, agent, call.Kind, asked)
+	}
 	if !ok {
 		call.Status, call.Error = 404, "unknown model"
 		if off, isOff := provider.SwitchedOff(asked); isOff {
@@ -1389,6 +1402,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	where := ""      // the last try's provider.Where, for the usage
 	again := 0       // times the last one left has been tried again
 	resealed := 0    // what of the conversation another account sealed was taken out: its reasoning, then its compaction
+	repicked := 0    // times Copilot's Auto was asked again for a model the account is served
 	floored := false // the reply's length raised to what the provider takes
 	plainFor := ""   // the account and model asked again without effort updates (#617)
 	// the key or subscription account the last try went to (#557)
@@ -1409,7 +1423,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// for its allowance running out to be told as that one's error
 		// and once the agent has the stream's headers from an earlier try's
 		// keepalives, for a failure to be told as the stream's error
-		hw := newHoldWriter(w, !last || again < max(lastRetries, rateRetries) || other != nil || kept.sent)
+		hw := newHoldWriter(w, !last || again < max(lastRetries, rateRetries) || other != nil || kept.sent || autoPicks(c) && repicked < 2)
 		hw.thinkingShown = !refusesAfterThinking(c.model)
 		hw.ctx, hw.alive = r.Context(), kept
 		if isGroup && g.FirstToken > 0 && !last && streams {
@@ -1530,6 +1544,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		})
 		held := false    // answered as its vendor did a moment ago, without asking
 		var queued int64 // ms it waited for a slot of its key's or account's
+		// the models Copilot's Auto picked for it, where from, and which
+		// were refused (#256)
+		autoPicked := func() []provider.AutoPick { return nil }
 		if said, ok := verifyHeld(c.restKey()); ok && last {
 			// the account must be verified first (#152): the agent's
 			// reconnects are told so again, not sent on to a vendor that
@@ -1541,6 +1558,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// once (hw.stop), not read on until the vendor hangs up
 			ctx, stop := context.WithCancel(r.Context())
 			hw.stop = stop
+			if autoPicks(c) {
+				// the reply names the pick it went as last (#256: it
+				// named one Copilot refused)
+				p := c.p
+				ctx, autoPicked = provider.WithAutoPicks(ctx, func(m string) { noteMember(hw, r, p, m) })
+			}
 			// when the request last went out to the vendor, its body
 			// written: what came before is magpie's, what after the
 			// vendor's (Record.Sent)
@@ -1589,7 +1612,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			call.Error = refusedError(c.p, c.model, hw.failMsg)
 		}
 		try := Try{ID: c.rest, Model: c.model, Effort: sent, Picked: picked, Fixed: fixed, Fast: fast, Start: began, Done: true, Status: call.Status, Millis: time.Since(began).Milliseconds(), Error: call.Error, Queued: queued,
-			Served: call.Usage.Served}
+			Served: call.Usage.Served, Auto: autoPicked()}
 		asName := provider.SentNameOnIn(wiresOf(r.Context()), c.p.ID, accountAgent(c.p), c.model, sent)
 		try.Swapped, try.Routed = swapped(asName, call.Usage.Served), usage.GroupRouted(asName, call.Usage.Served)
 		try.TTFT, try.FirstText = hw.first.ms()
@@ -1624,6 +1647,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			continue
 		}
 		telemetry.attempt(call, try, c.p.ID, sent, hw, capture)
+		if autoPicks(c) && repicked < 2 && !hw.passing && hw.code() == http.StatusBadRequest &&
+			(provider.CopilotRefusal(hw.errBody()) || wrongEndpoint(hw.code(), hw.errBody())) {
+			// Copilot refused the model its Auto picked, and Auto has
+			// picked another, which is asked for on the APIs it is
+			// served on (#256)
+			repicked++
+			s.trace.update(tr, func(t *Route) { t.Tries[len(t.Tries)-1] = try })
+			i--
+			continue
+		}
 		if resealed < 2 && from == provider.Responses && !hw.passing && hw.code() >= 400 && foreignReasoning.Match(hw.errBody()) {
 			// the conversation moved here from another account or vendor,
 			// whose sealed reasoning this one can't read: asked again
@@ -1889,7 +1922,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 			// filter refused) rests, so the retry goes to another member. A
 			// reply the agent stopped itself is booked as before
 			try.Fail = failureOf(c, call.Status, []byte(call.Error))
-			unanswered(stuck, c)
+			// a compaction a rule sent to a model of its own isn't a turn of
+			// the conversation: it leaves the stick where it was when it
+			// answers (below), and breaking off mid-reply forgets nothing
+			// either (#776's follow-up)
+			if hit == nil || !hit.Compact {
+				unanswered(stuck, c)
+			}
 			if lateRests(call.Error) {
 				rest := s.restAfter(c, call.Status, hw.header, []byte(call.Error))
 				try.Fail, try.Rest = rest.Why, &rest
@@ -1994,6 +2033,8 @@ func (s *Server) attempt(w http.ResponseWriter, r *http.Request, from provider.P
 	// every request to the provider goes through its own proxy, if it has
 	// one (#237)
 	r = r.WithContext(p.Via(r.Context()))
+	// the reply says who answered it (#822)
+	noteMember(w, r, p, model)
 	// A Claude Code subscription must run through the genuine binary. Direct
 	// OAuth HTTP requests are content-classified as third-party traffic when
 	// they carry another agent's harness (Pi, OpenCode, and others).
@@ -2041,11 +2082,15 @@ func (s *Server) attempt(w http.ResponseWriter, r *http.Request, from provider.P
 	// Copilot's Auto (all a Student plan may pick) is asked which model it
 	// picks, as Copilot's clients do, and the request goes to that model on
 	// the APIs it is served on, with the session's token
+	if model == provider.CopilotAuto && p.Account != nil && p.Account.Agent == "copilot" {
+		r = r.WithContext(provider.WithAutoPrompt(r.Context(), lastUserText(from, body)))
+	}
 	if ctx, m, err := p.ResolveAuto(r.Context(), model); err != nil {
 		msg := p.Name + ": " + err.Error()
 		return writeError(w, from, 502, msg), msg
 	} else if m != model {
 		r, model = r.WithContext(ctx), m
+		noteMember(w, r, p, model)
 	}
 	// a backend that only streams gets a non-streaming request translated
 	// (the provider is always streamed on that path) rather than relayed
@@ -2085,6 +2130,39 @@ func (s *Server) attempt(w http.ResponseWriter, r *http.Request, from provider.P
 	return s.translate(w, r, p, from, to[0], model, body, &call.Usage)
 }
 
+// autoPicks is whether c is Copilot's Auto, which picks the model itself.
+func autoPicks(c candidate) bool {
+	return c.model == provider.CopilotAuto && c.p.Account != nil && c.p.Account.Agent == "copilot"
+}
+
+// lastUserText is the text of the request's last user turn, which
+// Copilot's Auto picks a model for.
+func lastUserText(from provider.Protocol, body []byte) string {
+	req, err := parse(from, body)
+	if err != nil {
+		return ""
+	}
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		m := req.Messages[i]
+		if m.Role != "user" {
+			continue
+		}
+		var b strings.Builder
+		for _, p := range m.Parts {
+			if p.Kind == Text {
+				if b.Len() > 0 {
+					b.WriteString("\n")
+				}
+				b.WriteString(p.Text)
+			}
+		}
+		if b.Len() > 0 {
+			return b.String()
+		}
+	}
+	return ""
+}
+
 // markOpenRouterSharedPool keeps an upstream routing fact in the held attempt,
 // rather than exposing it as a response header.
 func markOpenRouterSharedPool(w http.ResponseWriter) {
@@ -2109,6 +2187,13 @@ func (s *Server) forward(ctx context.Context, p provider.Provider, to provider.P
 			res.Body.Close()
 			res.Body = io.NopCloser(bytes.NewReader(b))
 			if !p.Retry(ctx, body, res.StatusCode, b) {
+				break
+			}
+			if m := p.AutoNext(ctx); m != "" && !slices.Contains(s.usable(p, m), to) {
+				// Auto's next pick isn't served on this API (gpt-4.1 on
+				// chat alone, after gpt-5.3-codex on /responses, #256): the
+				// refusal is passed on, and the request made again for it
+				// on its own API (the candidates' loop)
 				break
 			}
 			if res, err = s.forwardOnce(ctx, p, to, path, body, in); err != nil || res.StatusCode != http.StatusForbidden && res.StatusCode != http.StatusBadRequest {
@@ -2489,6 +2574,11 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 	if proto == provider.Chat && sse {
 		tidy = &chatTidy{}
 	}
+	// calls a model wrote into its text are made calls (textcalls.go)
+	var written *textCallTidy
+	if names := chatToolNames(body); proto == provider.Chat && sse && names != nil {
+		written = &textCallTidy{names: names}
+	}
 	var whole *chatWhole
 	if proto == provider.Chat && !sse && strings.Contains(res.Header.Get("Content-Type"), "json") {
 		whole = &chatWhole{}
@@ -2514,6 +2604,9 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 			out := buf[:n]
 			if tidy != nil {
 				out = tidy.write(out)
+			}
+			if written != nil {
+				out = written.write(out)
 			}
 			if whole != nil {
 				out = whole.write(out)
@@ -2548,7 +2641,13 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 		return out
 	}
 	if tidy != nil {
-		w.Write(sign(tidy.flush()))
+		out := tidy.flush()
+		if written != nil {
+			out = append(written.write(out), written.flush()...)
+		}
+		w.Write(sign(out))
+	} else if written != nil {
+		w.Write(sign(written.flush()))
 	}
 	if whole != nil {
 		out := whole.flush()
@@ -2794,7 +2893,7 @@ func (s *Server) forwardTranslated(ctx context.Context, p provider.Provider, to 
 			r.Effort, req = "none", &r
 			continue
 		}
-		if req.CacheKey != "" && badRequest(res.StatusCode) && !wrongEndpoint(res.StatusCode, b) {
+		if req.CacheKey != "" && badRequest(res.StatusCode) && !wrongEndpoint(res.StatusCode, b) && !provider.CopilotRefusal(b) {
 			// a vendor that turns away fields it doesn't know is asked again
 			// without the cache key, and not sent it again once that works —
 			// at once when its error names the key; not every error does
@@ -3169,6 +3268,15 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request, p provider.Pr
 	// a Gemini reply that says nothing is a failure, not a turn's end
 	// (#667)
 	empty := emptyFails(actual)
+	// calls a model wrote into its text are made calls (textcalls.go)
+	written := func(see func(Event)) (func(Event), func()) {
+		names := textCallNames(request.Tools)
+		if names == nil {
+			return see, func() {}
+		}
+		t := &textCallSee{names: names, see: see}
+		return t.event, t.release
+	}
 	if stream {
 		sw := newSSEWriter(w)
 		enc := encoder(from, sw, request, u)
@@ -3196,6 +3304,7 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request, p provider.Pr
 			}
 			enc.event(ev)
 		})
+		see, held := written(see)
 		serr := readSSEAlive(rd, func(_, data string) error {
 			return dec(data, see)
 		}, func() {
@@ -3205,6 +3314,7 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request, p provider.Pr
 				enc.keepalive()
 			}
 		})
+		held()
 		if serr != nil && failed == "" {
 			// the upstream died mid-reply: say so in the client's own
 			// protocol instead of finishing as if all went well
@@ -3229,10 +3339,12 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request, p provider.Pr
 		return 200, failed
 	}
 	var col collector
-	see := zenSee(zen, col.add)
-	if err := readSSE(rd, func(_, data string) error {
+	see, held := written(zenSee(zen, col.add))
+	err = readSSE(rd, func(_, data string) error {
 		return dec(data, see)
-	}); err != nil {
+	})
+	held()
+	if err != nil {
 		// a partial answer is not an answer
 		msg := p.Name + ": " + err.Error()
 		return writeError(w, from, 502, msg), msg

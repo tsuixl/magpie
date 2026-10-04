@@ -788,7 +788,9 @@ Termux uses the Android terminal build: the installer puts it in
 ### Docker
 
 `docker build` makes a server image: the terminal-only binary on
-distroless (`cc`, for the glibc the plugins' Bun needs), run as nonroot,
+distroless (`cc`, for the glibc the plugins' Bun needs) with bash and
+busybox for a terminal in the container (`docker exec -it magpie bash`, or a
+NAS panel's terminal; `magpie` is on its PATH), run as nonroot,
 with everything it keeps in a volume at `/config`: magpie's own files
 (`/config/magpie`), the sign-ins kept where their agent keeps them (HOME is
 `/config/home`, so `~/.codex`, `~/.claude`… are in it) and the cache with the

@@ -8,7 +8,8 @@
 // has it too, so it can be set ahead of one. Holding resets, the row of
 // them says whether the one expiring first is auto-used, beside "Use a
 // reset" on the Usage page's card and "Use one…" on the menu bar panel's.
-// An account in brief says its say beside its name. A GLM team's resets,
+// An account in brief says its say beside its name, with its switch (#801:
+// the account a week ran out on is the one in brief). A GLM team's resets,
 // spent on its own site, a plugin's, and an account with no name get none,
 // nor a button to use one. No click moves the page; no left-border accent.
 // English and Chinese, Chromium and WebKit; no backend, the API is faked here.
@@ -68,7 +69,7 @@ const words = {
     say: "Auto-use resets: when the week runs out, or before one expires",
     week: /week runs out/, expiry: /before one expires/,
     keptOn: "· auto-used before it expires", keptOff: "· not auto-used",
-    briefOn: "Auto-use: on", briefOff: "Auto-use: off",
+    brief: "Auto-use", label: "Auto-use resets",
     on: (who) => `${who} uses a reset by itself when its week runs out, or before one expires`, off: (who) => `${who} no longer uses a reset by itself`,
     use: "Use a reset", useOne: "Use one…",
   },
@@ -76,7 +77,7 @@ const words = {
     say: "自动使用重置卡： 周额度用完时 · 重置卡到期前",
     week: /周额度用完时/, expiry: /重置卡到期前/,
     keptOn: "· 到期前自动使用", keptOff: "· 不会自动使用",
-    briefOn: "自动用卡：开", briefOff: "自动用卡：关",
+    brief: "自动用卡", label: "自动使用重置卡",
     on: (who) => `${who} 会在周额度用完时、或重置卡到期前自动使用重置卡`, off: (who) => `${who} 不再自动使用重置卡`,
     use: "用一张重置卡", useOne: "用一张…",
   },
@@ -147,24 +148,31 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.equal((await page.locator(kept).textContent()).trim(), w.keptOn);
       assert.equal(await page.locator(kept).evaluate((e) => e.classList.contains("on")), true);
 
-      // the account in brief says its say beside its name
+      // the account in brief says its say beside its name, with its
+      // switch: the account a week ran out on is the one in brief (#801)
       const brief = '.subscription-account.brief[data-card="codex|two@example.com"]';
-      assert.equal((await page.locator(brief + " .acct-auto").textContent()).trim(), w.briefOff);
+      assert.equal((await page.locator(brief + " .acct-auto").textContent()).trim(), w.brief);
+      assert.equal(await page.locator(brief + " .auto-reset").getAttribute("role"), "switch");
+      assert.equal(await page.locator(brief + " .auto-reset").getAttribute("aria-label"), w.label);
+      await flip(page, brief + " .auto-reset", posts, "two@example.com", true);
+      assert.equal(await page.locator(brief + " .acct-auto").evaluate((e) => e.classList.contains("on")), true);
       // in full, holding no reset, it has the say and its switch, and no reset row
       await page.locator(brief + " .quota-acct-fold").click();
       await page.locator(two).waitFor();
       assert.equal(await text(page.locator(two + " .ar-say")), w.say);
+      assert.equal(await page.locator(two + " .auto-reset").getAttribute("aria-checked"), "true");
       assert.equal(await page.locator(".quota-resets .text").count(), 1, "nothing to use for the account holding none");
-      await flip(page, two + " .auto-reset", posts, "two@example.com", true);
-      // back in brief, on
+      await flip(page, two + " .auto-reset", posts, "two@example.com", false);
+      // back in brief, off
       await page.locator('.subscription-account[data-card="codex|two@example.com"] .quota-acct-fold').click();
-      await page.locator(brief + " .acct-auto.on").waitFor();
-      assert.equal((await page.locator(brief + " .acct-auto").textContent()).trim(), w.briefOn);
+      await page.locator(brief + ' .auto-reset[aria-checked="false"]').waitFor();
+      assert.equal(await page.locator(brief + " .acct-auto").evaluate((e) => e.classList.contains("on")), false);
       // and Me in brief: the resets it holds, and on
       await page.locator('.subscription-account[data-card="codex|Me@example.com"] .quota-acct-fold').click();
       const meBrief = '.subscription-account.brief[data-card="codex|Me@example.com"] .acct-auto';
       await page.locator(meBrief).waitFor();
-      assert.equal((await page.locator(meBrief).textContent()).trim(), "↺ 2 · " + w.briefOn);
+      assert.equal((await page.locator(meBrief).textContent()).trim(), "↺ 2 ·" + w.brief);
+      assert.equal(await page.locator(meBrief + " .auto-reset").getAttribute("aria-checked"), "true");
       const border = await page.evaluate(() => [...document.querySelectorAll(".quota-resets, .quota-resets *, .quota-autoreset, .quota-autoreset *, .acct-auto")].map((e) => getComputedStyle(e).borderLeftWidth).filter((b) => parseFloat(b) > 1));
       assert.deepEqual(border, [], "no left-border accent");
       assert.equal(await page.locator("select").count(), 0, "no native select");

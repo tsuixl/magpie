@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -73,6 +75,32 @@ func codexIn(at place) *Agent {
 	path := filepath.Join(dir, "config.toml")
 	catalogPath := filepath.Join(dir, "magpie-models.json")
 	get := func(k string) string { v, _ := edit.GetTOMLTop(path, k); return v }
+	// this machine's Codex reaches the gateway at the address its config
+	// gives, when that is magpie's on another host: the Codex app on
+	// Windows with its agent in WSL reads Windows' config.toml from WSL,
+	// where 127.0.0.1 is the distro's own, so the user points it at
+	// Windows as WSL sees it, or a forward of theirs (#816); magpie keeps
+	// that address, checks against it and writes it again
+	if at.spell == nil && at.base == nil {
+		at.base = func() string { return codexKeptGateway(path) }
+	}
+	// the catalog as the config names it: relative to config.toml on
+	// Windows, where a C:\ path is no file to the same Codex reading it
+	// from WSL (#816); Codex reads a relative one from its home
+	catalogRef := at.native(catalogPath)
+	if at.spell == nil && runtime.GOOS == "windows" {
+		catalogRef = filepath.Base(catalogPath)
+	}
+	// ownCatalog: the config names magpie's catalog, by any spelling
+	ownCatalog := func(c string) bool {
+		if c == "" {
+			return false
+		}
+		if c == catalogRef || c == at.native(catalogPath) {
+			return true
+		}
+		return at.spell == nil && !filepath.IsAbs(c) && filepath.Clean(filepath.Join(dir, c)) == filepath.Clean(catalogPath)
+	}
 	asProvider := func() bool { return get("model_provider") == magpieID }
 	viaBase := func() bool { return isCodexGatewayOn(get("openai_base_url"), at.host()) }
 	routed := func() bool { return asProvider() || viaBase() }
@@ -371,7 +399,7 @@ func codexIn(at place) *Agent {
 		if p := unstash(at.key("codex.provider")); p != "" && p != magpieID {
 			back = append(back, edit.KV{Path: "model_provider", Value: p})
 		}
-		if c := unstash(at.key("codex.catalog")); c != "" && c != at.native(catalogPath) {
+		if c := unstash(at.key("codex.catalog")); c != "" && !ownCatalog(c) {
 			back = append(back, edit.KV{Path: "model_catalog_json", Value: c})
 		}
 		if e := unstash(at.key("codex.effort")); e != "" {
@@ -474,7 +502,7 @@ func codexIn(at place) *Agent {
 			// which refuses it (#259). A base URL of the user's own stays.
 			kv := []edit.KV{
 				{Path: "model_provider", Value: magpieID},
-				{Path: "model_catalog_json", Value: at.native(catalogPath)},
+				{Path: "model_catalog_json", Value: catalogRef},
 				{Path: "model", Value: v},
 			}
 			if u := get("openai_base_url"); u == "" || viaBase() {
@@ -626,7 +654,7 @@ func codexIn(at place) *Agent {
 				}
 			}
 			switch {
-			case asProvider() && get("model_catalog_json") == at.native(catalogPath):
+			case asProvider() && ownCatalog(get("model_catalog_json")):
 				// set up by a magpie from before #259: the threads started
 				// on Codex's built-in provider reach magpie too
 				if get("openai_base_url") == "" {
@@ -679,7 +707,7 @@ func codexIn(at place) *Agent {
 				if t["base_url"] != at.v1() || t["experimental_bearer_token"] != gateway.Token || t["wire_api"] != "responses" {
 					return "Codex's [model_providers.magpie] no longer points at magpie's gateway (" + at.v1() + ")"
 				}
-				if c := get("model_catalog_json"); c != at.native(catalogPath) {
+				if c := get("model_catalog_json"); !ownCatalog(c) {
 					return "Codex's model_catalog_json is no longer magpie's list"
 				}
 				if _, err := os.Stat(catalogPath); err != nil {
@@ -973,6 +1001,37 @@ func codexGatewayURL() string { return gateway.URL() + gateway.CodexPath }
 func isCodexGateway(u string) bool { return isCodexGatewayOn(u, "127.0.0.1") }
 
 // isCodexGatewayOn is isCodexGateway for a gateway reached at host.
+// codexKeptGateway is the gateway's URL for this machine's Codex: the
+// address its config names when that is magpie's gateway on a host other
+// than this one's loopback (openai_base_url at the Codex path, or
+// [model_providers.magpie]'s base_url with magpie's key, that one first
+// while magpie is Codex's provider), else gateway.URL().
+func codexKeptGateway(path string) string {
+	kept := func(u, suffix string) string {
+		u = strings.TrimSuffix(strings.TrimSpace(u), "/")
+		rest, ok := strings.CutPrefix(u, "http://")
+		if !ok || !strings.HasSuffix(rest, suffix) {
+			return ""
+		}
+		hp := strings.TrimSuffix(rest, suffix)
+		h, _, err := net.SplitHostPort(hp)
+		if err != nil || h == "" || h == "127.0.0.1" || h == "localhost" || h == "::1" {
+			return ""
+		}
+		return "http://" + hp
+	}
+	base, _ := edit.GetTOMLTop(path, "openai_base_url")
+	var table string
+	if t, _ := edit.GetTOMLTable(path, "model_providers."+magpieID); t["experimental_bearer_token"] == gateway.Token {
+		table = kept(t["base_url"], "/v1")
+	}
+	// the one Codex is on first: magpie's table when it is the provider
+	if p, _ := edit.GetTOMLTop(path, "model_provider"); p == magpieID && table != "" {
+		return table
+	}
+	return cmp.Or(kept(base, gateway.CodexPath), table, gateway.URL())
+}
+
 func isCodexGatewayOn(u, host string) bool {
 	return strings.HasPrefix(u, "http://"+host+":") && strings.HasSuffix(strings.TrimSuffix(u, "/"), gateway.CodexPath)
 }

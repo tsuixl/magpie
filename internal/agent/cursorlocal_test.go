@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -74,5 +75,58 @@ func TestCursorLocal(t *testing.T) {
 	}
 	if got := usage.AgentOf("Cursor/3.2"); got != "cursor" {
 		t.Errorf("AgentOf(Cursor/3.2) = %q", got)
+	}
+}
+
+// Its row connects as other agents' do, with no command to run (mamba on
+// Discord): magpie sets CURSOR_LOCAL_AGENT_BASE_URL and _API_KEY for the
+// user, which only this build reads, notes it, sets them again when the
+// gateway is served (the Mac's launchd forgets them at a restart, and the
+// port may change), and clears them on disconnect.
+func TestCursorLocalConnects(t *testing.T) {
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
+	var set []map[string]string
+	oldEnv, oldApp := cursorLocalUserEnv, cursorLocalApp
+	t.Cleanup(func() { cursorLocalUserEnv, cursorLocalApp = oldEnv, oldApp })
+	cursorLocalUserEnv = func(env map[string]string) error { set = append(set, env); return nil }
+	cursorLocalApp = func() string { return "/Applications/Cursor Private Inference.app/Contents/MacOS/Cursor" }
+	a, err := Find(CursorLocalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Fields) == 0 || a.Wired() {
+		t.Fatalf("fields %d, wired %v before connecting", len(a.Fields), a.Wired())
+	}
+	how, err := a.ConnectHow()
+	if err != nil || how.How != "magpie" || !a.Wired() {
+		t.Fatalf("connect: %+v %v, wired %v", how, err, a.Wired())
+	}
+	want := map[string]string{"CURSOR_LOCAL_AGENT_BASE_URL": gateway.URL() + "/v1", "CURSOR_LOCAL_AGENT_API_KEY": gateway.TokenFor(CursorLocalID)}
+	if len(set) != 1 || set[0]["CURSOR_LOCAL_AGENT_BASE_URL"] != want["CURSOR_LOCAL_AGENT_BASE_URL"] || set[0]["CURSOR_LOCAL_AGENT_API_KEY"] != want["CURSOR_LOCAL_AGENT_API_KEY"] {
+		t.Fatalf("set %v, want %v", set, want)
+	}
+	if a.Launch() == "" {
+		t.Error("the command to start it from a shell is gone")
+	}
+
+	// served again: set again
+	KeepCursorLocalEnv(context.Background())
+	if len(set) != 2 || set[1]["CURSOR_LOCAL_AGENT_API_KEY"] != want["CURSOR_LOCAL_AGENT_API_KEY"] {
+		t.Fatalf("not set again when served: %v", set)
+	}
+
+	if err := a.Disconnect(); err != nil || a.Wired() {
+		t.Fatalf("disconnect: %v, wired %v", err, a.Wired())
+	}
+	if len(set) != 3 || set[2] != nil {
+		t.Fatalf("not cleared: %v", set)
+	}
+	// off, a serve sets nothing
+	KeepCursorLocalEnv(context.Background())
+	if len(set) != 3 {
+		t.Fatalf("set while off: %v", set)
 	}
 }

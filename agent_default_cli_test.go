@@ -43,3 +43,51 @@ func TestAgentDefaultPutsBackTheModelBefore(t *testing.T) {
 		t.Fatalf("the model field's default leaves Claude Code as installed:\n%s", s)
 	}
 }
+
+// `magpie claude model default` on a Claude Code wired into magpie puts
+// back the endpoint and token the user had before magpie and leaves them:
+// it took them away, and Disconnect after it had nothing to put back
+// (__jingling on X, twice).
+func TestAgentModelDefaultKeepsTheEndpointBefore(t *testing.T) {
+	groupsHome(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	path := filepath.Join(os.Getenv("HOME"), ".claude", "settings.json")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	own := "{\n  \"model\": \"opus\",\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": \"https://relay.example.com\",\n    \"ANTHROPIC_AUTH_TOKEN\": \"sk-mine\"\n  }\n}\n"
+	if err := os.WriteFile(path, []byte(own), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := func() string {
+		b, _ := os.ReadFile(path)
+		return string(b)
+	}
+	mine := func(when string) {
+		t.Helper()
+		s := read()
+		if !strings.Contains(s, `"ANTHROPIC_BASE_URL": "https://relay.example.com"`) || !strings.Contains(s, `"ANTHROPIC_AUTH_TOKEN": "sk-mine"`) {
+			t.Fatalf("%s: the user's own endpoint and token are gone:\n%s", when, s)
+		}
+	}
+	if err := run([]string{"claude", "a/m"}); err != nil {
+		t.Fatal(err)
+	}
+	if s := read(); strings.Contains(s, "relay.example.com") {
+		t.Fatalf("not wired:\n%s", s)
+	}
+	if err := run([]string{"claude", "model", "default"}); err != nil {
+		t.Fatal(err)
+	}
+	mine("model default")
+	if s := read(); strings.Contains(s, `"model"`) {
+		t.Fatalf("model default kept a model:\n%s", s)
+	}
+	if err := run([]string{"claude", "default"}); err != nil {
+		t.Fatal(err)
+	}
+	mine("default after it")
+	// unwired, a field's default leaves the user's own endpoint too
+	if err := run([]string{"claude", "model", "default"}); err != nil {
+		t.Fatal(err)
+	}
+	mine("model default unwired")
+}

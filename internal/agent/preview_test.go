@@ -103,7 +103,10 @@ func TestElapsed(t *testing.T) {
 // sign-in the copy doesn't hold (Codex's auth.json on Windows): a Claude Code
 // on codex/… had an empty preview.
 func TestDryRunKnowsTheAskersProviders(t *testing.T) {
-	t.Cleanup(func() { dryProviders = nil })
+	t.Cleanup(func() {
+		dryProviders = nil
+		disconnectDryRun = false
+	})
 	if isMagpie("elsewhere/gpt-x") {
 		t.Fatal("an unknown provider's model is magpie's")
 	}

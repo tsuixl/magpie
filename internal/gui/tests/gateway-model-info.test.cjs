@@ -2,7 +2,7 @@
 // The Gateway page's model list (ARNO on Discord): a search box finds models
 // by id, name, provider and a group's models, and each row ends with what
 // agents are told of the model — its reasoning levels, whether it takes
-// images, its context — the full detail in the chips' tooltip; a routing
+// images, its context, its reply limit — the full detail in the chips' tooltip; a routing
 // group's are what its models all have, its tooltip naming them.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
@@ -14,7 +14,7 @@ const assets = path.resolve(__dirname, "../assets");
 const providers = {
   providers: [
     { id: "acme", name: "Acme", icon: "generic", agents: [], models: [
-      { id: "gpt-5.5", name: "GPT-5.5", on: true, efforts: ["low", "medium", "high", "xhigh"], images: true, context: 400000 },
+      { id: "gpt-5.5", name: "GPT-5.5", on: true, efforts: ["low", "medium", "high", "xhigh"], images: true, context: 400000, output: 128000 },
       { id: "gpt-5.5-mini", name: "GPT-5.5 mini", on: true, efforts: ["low", "medium", "high", "xhigh"], kept: ["low", "medium"], images: true, context: 272000 },
       { id: "text-only", name: "Text Only", on: true, images: false, context: 128000 },
       { id: "hidden", name: "Hidden", on: false, efforts: ["low"] },
@@ -86,7 +86,9 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
     let i = await info("acme/gpt-5.5");
     assert.deepEqual(i.chips, ["low–xhigh", "", "400K"]);
     assert.equal(i.img, 1);
-    assert.equal(i.tip, "Reasoning: low, medium, high, xhigh\nAccepts images\nContext: 400,000 tokens");
+    // its reply limit, as agents are told it (ARNO: a provider's model's
+    // was said only once written to an agent's config)
+    assert.equal(i.tip, "Reasoning: low, medium, high, xhigh\nAccepts images\nContext: 400,000 tokens\nOutput: up to 128,000 tokens");
     i = await info("acme/gpt-5.5-mini");
     assert.deepEqual(i.chips, ["low / medium", "", "272K"], "the levels kept, not all it has");
     i = await info("acme/text-only");

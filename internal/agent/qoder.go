@@ -113,7 +113,7 @@ func qoderAt(at place, b qoderBuild) *Agent {
 		return ok && qoderKeyed(get(slot+".apiKey"), b.id)
 	}
 	return &Agent{
-		ID: b.id, Name: b.name, Icon: "qoder", Aliases: b.aliases,
+		ID: b.id, Name: b.name, Icon: "qoder", Aliases: b.aliases, Spelled: prefixed,
 		Bin: b.bin, Dir: dir, Path: path,
 		Sync: func() error {
 			ref, ok := cutMagpie(get("model.name"))

@@ -105,7 +105,7 @@ func grokIn(at place) *Agent {
 		return catalog.Efforts(magpieModels("grok"), ref)
 	}
 	return atomic(&Agent{
-		ID: "grok", Name: "Grok Build", Icon: "xai", Aliases: []string{"grok-build", "grok-cli"},
+		ID: "grok", Name: "Grok Build", Icon: "xai", Aliases: []string{"grok-build", "grok-cli"}, Spelled: prefixed,
 		UA:  []string{"grok-shell", "grok-pager", "xai-grok-build"}, // grok-pager: its terminal front end
 		Dir: dir, Path: path,
 		Sync: func() error {

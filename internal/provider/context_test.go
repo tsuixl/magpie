@@ -55,6 +55,20 @@ func TestContextSetByUser(t *testing.T) {
 	if got := of(); got != 100000 {
 		t.Errorf("set lower: %d", got)
 	}
+	// Mikan on Discord: told the smallest member's, kept as smallest when
+	// the members change
+	if err := SaveGroup(Group{ID: "g", Name: "g", Members: []string{"a/m1", "b/m2"}, Context: ContextSmallest}); err != nil {
+		t.Fatal(err)
+	}
+	if got := of(); got != 128000 {
+		t.Errorf("smallest member's: %d", got)
+	}
+	if err := SaveGroup(Group{ID: "g", Name: "g", Members: []string{"b/m2"}, Context: -7}); err != nil {
+		t.Fatal(err)
+	}
+	if got := of(); got != 200000 {
+		t.Errorf("smallest after a member left: %d", got)
+	}
 }
 
 // #712: a group of DeepSeek V4.1 Flash (1M) at WorkBuddy and OpenCode Go,

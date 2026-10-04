@@ -247,3 +247,26 @@ test("download: a platform's link goes to that asset of the latest release", asy
   assert.equal(res.headers.get("Location"), "https://dl/x");
   assert.equal((await ask("/download/nothing-like-it")).status, 404);
 });
+
+test("docs: an English docs page sends a browser that prefers Chinese or Japanese to its own, until a language is picked", async () => {
+  const have = new Set(["/docs/start", "/docs/zh/start", "/docs/ja/start", "/docs/only-en"]);
+  const env = { ASSETS: { fetch: async (r) => new Response(have.has(new URL(r.url).pathname) ? "<html></html>" : "nf", { status: have.has(new URL(r.url).pathname) ? 200 : 404, headers: { "Content-Type": "text/plain" } }) } };
+  const to = async (path, headers) => {
+    const res = await worker.fetch(new Request("https://usemagpie.ai" + path, { headers }), env, ctx);
+    assert.match(res.headers.get("Vary") || "", /Accept-Language/);
+    return res.status === 302 ? res.headers.get("Location") : res.status;
+  };
+  assert.equal(await to("/docs/start", {}), 200);
+  assert.equal(await to("/docs/start", { "Accept-Language": "en-US,en;q=0.9,zh;q=0.8" }), 200);
+  assert.equal(await to("/docs/start", { "Accept-Language": "zh-CN,zh;q=0.9" }), "/docs/zh/start");
+  assert.equal(await to("/docs/start?omarchy=1", { "Accept-Language": "ja-JP" }), "/docs/ja/start?omarchy=1");
+  assert.equal(await to("/docs/start", { "Accept-Language": "zh-CN", Cookie: "lang=en" }), 200);
+  assert.equal(await to("/docs/start", { Cookie: "lang=ja" }), "/docs/ja/start");
+  // German has no docs: English
+  assert.equal(await to("/docs/start", { "Accept-Language": "de-DE" }), 200);
+  // a page not written in Chinese yet
+  assert.equal(await to("/docs/only-en", { "Accept-Language": "zh-CN" }), 200);
+  // a language's own page is never moved
+  const res = await worker.fetch(new Request("https://usemagpie.ai/docs/zh/start", { headers: { Cookie: "lang=en" } }), env, ctx);
+  assert.equal(res.status, 200);
+});

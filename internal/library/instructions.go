@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -409,6 +410,23 @@ func (l *Library) changeSets(c InstructionsChange) error {
 			return err
 		}
 		l.Instructions.Sets = slices.DeleteFunc(l.Instructions.Sets, func(s InstrSet) bool { return s.ID == id })
+	}
+	// an empty set in use gives the agents nothing, so a set added, or one
+	// given text, is the one they read from then on (Fate on Discord: a new
+	// set was written into no agent while the Default set read was empty)
+	if c.Activate == "" && c.Shared == nil && readText(setPath(l.active())) == "" {
+		if x := c.Create; x != nil {
+			l.Instructions.Active = x.ID
+		}
+		for _, id := range slices.Sorted(maps.Keys(c.Texts)) {
+			if x := c.Texts[id]; x != nil && strings.TrimSpace(*x) != "" && id != l.active() {
+				l.Instructions.Active = id
+				break
+			}
+		}
+		if l.Instructions.Active == defaultSet {
+			l.Instructions.Active = ""
+		}
 	}
 	if id := c.Activate; id != "" {
 		if !l.hasSet(id) {

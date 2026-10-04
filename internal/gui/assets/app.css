@@ -633,6 +633,11 @@ body.window .field.solo { grid-column: auto; }
 .wb-checkin { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .wb-checkin .ci-say { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .wb-checkin .ci-say > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a failed check-in's reason wraps under it rather than ending in "…" (#821) */
+.wb-checkin[data-state="bad"] { flex-wrap: wrap; align-items: flex-start; }
+.wb-checkin[data-state="bad"] .ci-say { flex: 1 1 180px; align-items: flex-start; }
+.wb-checkin[data-state="bad"] .ci-say > span { white-space: normal; overflow-wrap: anywhere; }
+.wb-checkin[data-state="bad"] .ci-dot { margin-top: 4px; }
 .wb-checkin .ci-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .wb-checkin .ci-dot.ok { background: var(--green); }
 .wb-checkin .ci-dot.bad { background: var(--red); }
@@ -819,6 +824,17 @@ body.window .field.solo { grid-column: auto; }
 /* the table scrolls sideways in its own box, never the page */
 .led-wrap { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
 .led-wrap.none { overflow: visible; }
+/* its own scrollbar is at the table's foot, fifty rows down and out of
+   sight (#799): this one stands in for it, held at the bottom of the window
+   while the table is in it, and drawn always, the Mac's overlay one too */
+.led-wrap::-webkit-scrollbar { height: 0; }
+.led-hscroll { position: sticky; bottom: 0; z-index: 2; overflow-x: auto; overflow-y: hidden; height: 12px; margin-top: 2px; background: var(--bg); }
+.led-hscroll[hidden] { display: none; }
+.led-hscroll > div { height: 1px; }
+.led-hscroll::-webkit-scrollbar { height: 10px; background: transparent; }
+.led-hscroll::-webkit-scrollbar-thumb { background: var(--faint); border: 2px solid transparent; border-radius: 10px; background-clip: padding-box; }
+.led-hscroll::-webkit-scrollbar-thumb:hover { background-color: var(--muted); }
+.led-hscroll::-webkit-scrollbar-button, .led-hscroll::-webkit-scrollbar-corner { display: none; }
 .led-none { padding: 18px 16px; color: var(--muted); text-align: center; line-height: 1.5; }
 .led-sk { padding: 11px 14px; }
 .led-sk + .led-sk { border-top: 1px solid var(--line-2); }
@@ -875,6 +891,7 @@ body.window .field.solo { grid-column: auto; }
 .led-dl dd.bad { color: var(--red); font-weight: 600; }
 .led-dl dd.said { color: var(--fg); white-space: pre-wrap; }
 .led-dl dd.muted { color: var(--muted); }
+.led-dl .led-route-link { padding: 0; font: inherit; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
 /* what was said in a request, in its details */
 .led-cx { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-2); }
 .cx-sec + .cx-sec { margin-top: 10px; }
@@ -1156,7 +1173,9 @@ body.panel { --row-spring: cubic-bezier(.25, .3, .1, 1); }
 .ag-open .field { display: flex; justify-content: flex-start; width: 100%; height: 30px; gap: 8px; padding: 0 10px; border-radius: 8px; background: var(--card); font-size: 12.5px; box-shadow: inset 0 0 0 1px var(--pill-line); }
 body.panel .ag-open .field:hover { background: var(--card); box-shadow: inset 0 0 0 1px var(--pill-line), var(--pill-shadow); }
 body.panel .ag-open .field.open { box-shadow: inset 0 0 0 1px var(--accent); }
-.ag-open .field .k { order: 0; width: 44px; text-align: left; font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* wide enough for the longest name an agent's own settings go by
+   (Aside's standard, Claude Code's thinking), which 44px cut to stand... */
+.ag-open .field .k { order: 0; width: 62px; text-align: left; font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ag-open .field .v { order: 1; flex: 1 1 auto; font-weight: 400; text-align: left; }
 .ag-open .field > .ic, .ag-open .field > .ic-stack { order: 2; flex: none; }
 .row.agent .ag-open .field .ic { width: 14px; height: 14px; }
@@ -1267,7 +1286,7 @@ body.panel .profiles #save { height: 25px; } /* the field's: the line keeps its 
 .resets-kept { color: var(--faint); }
 .resets-kept.on { color: var(--accent); }
 /* in brief: the resets held and the say, beside the account's name */
-.subscription-account .acct-auto { flex: none; margin-left: auto; font-size: 10.5px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.subscription-account .acct-auto { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .subscription-account .acct-auto.on { color: var(--accent); }
 .subscription-account .acct-auto-n { color: var(--muted); }
 .subscription-account .acct-auto + .plan { margin-left: 0; }
@@ -1288,6 +1307,7 @@ body.panel .profiles #save { height: 25px; } /* the field's: the line keeps its 
 .pq-asof { color: var(--amber); }
 .pq-card.stale > .pq-sub { white-space: normal; text-overflow: clip; overflow-wrap: anywhere; }
 .pq-card > .pq-asof { grid-column: 1 / -1; }
+.pq-card > .quota-balance { grid-column: 1 / -1; margin-top: 4px; }
 .pq-card .skeleton.sk-aq { width: 130px; height: 9px; border-radius: 4px; }
 .pq-card .skeleton.sk-ring { width: 34px; height: 34px; border-radius: 50%; }
 /* the panel's footer: a hairline over it, as much room above as below */
@@ -1580,8 +1600,8 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 /* the connect card: label column, then the value with a copy button */
 .connect { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px 14px; align-items: start; padding: 12px 14px 14px; }
 .connect > div { min-width: 0; }
-.connect label { font-size: 12px; color: var(--muted); text-align: right; padding-top: 4px; }
-.connect .hint { font-size: 11px; color: var(--faint); margin-top: 4px; line-height: 1.4; }
+.connect label { font-size: 12px; color: var(--fg-2); text-align: right; padding-top: 4px; }
+.connect .hint { font-size: 11px; color: var(--fg-2); margin-top: 4px; line-height: 1.4; }
 .connect .val { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 9px; border-radius: 7px; background: var(--pill); box-shadow: inset 0 0 0 1px var(--line-2); max-width: 100%; }
 .connect .val code { font-size: 12px; color: var(--fg); user-select: text; -webkit-user-select: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .connect .val > .val { min-width: 0; height: auto; padding: 0; background: none; box-shadow: none; }
@@ -1609,6 +1629,8 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .row.model:hover { background: var(--card-2); }
 .row.model.selected { background: var(--sel); }
 .row.model .name { font: 12px var(--code); }
+.row.model .who { user-select: text; -webkit-user-select: text; cursor: text; }
+.row.model .sub { color: var(--fg-2); }
 .row.model .copy { opacity: 0; }
 .row.model:hover .copy, .row.model.selected .copy { opacity: 1; }
 .row.model .copy.done { opacity: 1; }
@@ -1616,6 +1638,7 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 /* recent calls */
 .activity { padding: 5px 8px 6px; font-size: 11.5px; }
 .activity .none { padding: 8px 6px; color: var(--muted); line-height: 1.45; }
+.activity .activity-more { display: flex; align-items: center; justify-content: center; width: 100%; height: 25px; margin-top: 2px; font-size: 11px; color: var(--muted); }
 .call-item + .call-item { border-top: 1px solid transparent; }
 .call-item.open { margin: 2px 0 5px; border-radius: 8px; background: var(--card-2); box-shadow: inset 0 0 0 1px var(--line-2); overflow: hidden; }
 .call { display: flex; align-items: center; gap: 10px; height: 24px; padding: 0 6px; border-radius: 6px; white-space: nowrap; cursor: pointer; outline: none; }
@@ -1970,8 +1993,8 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .editor .icon-pick .icon-grid .ic { width: 18px; height: 18px; }
 .editor .ehead b { font-weight: 600; }
 .editor .ehead .note { font-size: 12px; color: var(--muted); }
-.editor label { font-size: 12px; color: var(--muted); text-align: right; padding-top: 5px; }
-.editor .hint { font-size: 11px; color: var(--faint); margin-top: 4px; }
+.editor label { font-size: 12px; color: var(--fg-2); text-align: right; padding-top: 5px; }
+.editor .hint { font-size: 11px; color: var(--fg-2); margin-top: 4px; }
 /* a provider's own proxy (#237): the address beside the options, its room
    kept while it is hidden so a pick never changes the dialog's height */
 .editor .proxy-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -2139,6 +2162,12 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 /* a long list scrolls on its own, not the editor with it past its ends */
 .mchips { display: flex; flex-wrap: wrap; gap: 4px; max-height: min(132px, 28vh); overflow-y: auto; overscroll-behavior: contain; padding: 1px; }
 .mchips::-webkit-scrollbar { width: 0; }
+/* let out to its full height (#833): the editor's body scrolls instead */
+.mchips.open { max-height: none; overflow-y: visible; }
+/* its Expand the list / Collapse the list, the Agents page's Show more
+   in small: under the chips, the width of the box */
+.mchips-fold { border-top: 0; padding: 4px 9px; font-size: 11.5px; border-radius: 8px; }
+.mchips-fold[hidden] { display: none; }
 /* In a short window the editor's body shows little more than the list, so
    the pointer is nearly always over it; held at its ends, the wheel could
    never take the body on to what lies below (悠悠哥 on Discord: a small
@@ -2189,7 +2218,7 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .mname { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
 .mname .mwho { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; min-width: 0; }
 .mname .mwho input { flex: 1; min-width: 0; max-width: 220px; height: 25px; }
-.mname .mwho code { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.mname .mwho code { font-size: 11px; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; user-select: text; -webkit-user-select: text; cursor: text; }
 .mname .mapi { flex: none; height: 24px; font-size: 11px; }
 .mname .msame { display: flex; align-items: center; gap: 6px; flex: 0 1 230px; min-width: 0; font-size: 11.5px; color: var(--muted); }
 .mname .msame span { flex: none; }
@@ -2221,7 +2250,7 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .set-page > .list:not(:last-child) { margin-bottom: 8px; }
 .row.pref { min-height: 50px; padding: 8px 12px 8px 14px; gap: 14px; }
 .row.pref .who { flex: 1 1 auto; }
-.row.pref .sub { margin-top: 2px; }
+.row.pref .sub { margin-top: 2px; color: var(--fg-2); }
 /* Keep export consent readable, and give collector URLs their own line. */
 #otelList .otel-section { padding: 10px 14px 6px; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--pill); }
 #otelList .otel-section:not(:first-child) { border-top: 1px solid var(--line-2); }
@@ -2339,6 +2368,7 @@ input.words.search-key, input.words.search-url { flex: 1 1 120px; width: auto; m
 .chips .chip { transition: background .16s var(--ease), color .16s var(--ease), transform .14s var(--ease); }
 .chips .chip:active { transform: scale(.96); }
 .status { transition: opacity .2s var(--ease); }
+.status.err, .status.warn { user-select: text; -webkit-user-select: text; cursor: text; }
 
 /* the theme crossfades instead of snapping */
 html.theming, html.theming *, html.theming *::before, html.theming *::after {
@@ -2786,6 +2816,7 @@ body.window .row + .row.agent.conn > .who { min-height: 41px; } /* the line abov
 .ag-add { flex: none; height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: var(--pill); color: var(--fg); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
 .ag-add:hover { background: var(--pill-hover); }
 .ag-cant { flex: none; font-size: 12px; color: var(--faint); }
+.ag-conn-gap { flex: none; width: 32px; margin-left: 10px; }
 .row.agent.conn.unplugged .ag-handle .ic { opacity: .7; }
 /* opened: the settings as named lines on the row's quieter ground */
 .ag-exp { flex: 0 0 calc(100% + 26px); margin: 7px -12px -7px -14px; padding: 4px 16px 14px 50px; border-top: 1px solid var(--line-2); background: var(--card-2); cursor: default; }
@@ -2795,6 +2826,13 @@ body.window .row + .row.agent.conn > .who { min-height: 41px; } /* the line abov
 .ag-v { flex: 1; min-width: 0; font-size: 12.5px; color: var(--fg-2); display: grid; gap: 4px; }
 .ag-vl { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-height: 24px; }
 .ag-vl > .fields { margin-left: 0; }
+/* the opened row has the whole width under the name to lay its settings out
+   in, so they are a line of pills that wraps rather than the shut row's two
+   narrow columns: a name, a model and a logo do not go into 124px. #agents for
+   the extras width the shut row's own rule sets on the id. */
+#agents .ag-exp .ag-vl > .fields { display: flex; flex-wrap: wrap; width: 100%; gap: 6px; }
+#agents .ag-exp .ag-vl > .fields > .field { flex: 0 1 auto; min-width: 170px; }
+#agents .ag-exp .ag-vl > .fields > .extras-cell { justify-content: flex-start; flex-wrap: wrap; }
 .ag-code, .ag-diff code, .ag-path { font-family: var(--code); font-size: 11.5px; }
 .ag-code { padding: 1px 5px; border-radius: 4px; background: var(--pill); color: var(--fg); }
 .ag-warn { gap: 8px; font-size: 12px; }
@@ -2851,6 +2889,7 @@ body.window .row + .row.agent.conn > .who { min-height: 41px; } /* the line abov
      the name, the link and the switch staying beside it */
   .row.agent.conn > .field.ag-start, .row.agent.conn > .who + .field.ag-start { order: 1; flex: 1 1 100%; width: auto; margin: 9px 0 0 34px; }
   .row.agent.conn > .ag-exp { order: 2; }
+  .ag-conn-gap { display: none; }
 }
 
 /* Checkboxes are drawn as the app's own, not the system's (ARNO on

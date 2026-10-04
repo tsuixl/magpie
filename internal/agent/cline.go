@@ -157,7 +157,7 @@ func cline(home string) *Agent {
 		return "cline"
 	}
 	return &Agent{
-		ID: "cline", Name: "Cline", Icon: "cline", Aliases: []string{"cline-cli"},
+		ID: "cline", Name: "Cline", Icon: "cline", Aliases: []string{"cline-cli"}, Spelled: prefixed,
 		UA:  []string{"cline"},
 		Bin: "cline", Dir: dir, Path: path,
 		Sync: func() error {

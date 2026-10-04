@@ -6,9 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/provider"
 )
 
@@ -20,7 +23,7 @@ func zenServer(t *testing.T, reply string) (*Server, map[string][]map[string]any
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	for _, p := range []provider.Provider{
-		{ID: "zen", Name: "Zen", Key: "public", Chat: "https://opencode.ai/zen/v1", Models: []string{"mimo-v2.6-flash-free", "kimi-k2.6"}},
+		{ID: "zen", Name: "Zen", Key: "public", Chat: "https://opencode.ai/zen/v1", Models: []string{"mimo-v2.6-flash-free", "kimi-k2.6", "big-pickle", "nemo-zero"}},
 		{ID: "other", Name: "Other", Key: "k", Chat: "https://other.test/v1", Models: []string{"mimo-v2.6-flash-free"}},
 	} {
 		if err := provider.Save(p); err != nil {
@@ -202,6 +205,36 @@ func TestZenFreeOnlyFreeModels(t *testing.T) {
 	for _, host := range []string{"opencode.ai", "other.test"} {
 		if n := toolNames(got[host][0]); strings.Join(n, ",") != "Bash" {
 			t.Fatalf("%s: tools %v", host, n)
+		}
+	}
+}
+
+// Zen's free models whose ids don't end in -free are asked as OpenCode
+// asks too (361 on Discord: big-pickle answered 403 FreeTierError): one
+// known without the catalog, and one models.dev's opencode prices at
+// nothing; one it prices is not.
+func TestZenFreeZeroCostModels(t *testing.T) {
+	s, got := zenServer(t, chatSSE("hi", "", ""))
+	if err := os.MkdirAll(filepath.Dir(catalog.CachePath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalog.CachePath(), []byte(`{"opencode":{"models":{
+		"nemo-zero":{"id":"nemo-zero","cost":{"input":0,"output":0}},
+		"kimi-k2.6":{"id":"kimi-k2.6","cost":{"input":0.6,"output":2.5}}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog.Reset()
+	t.Cleanup(catalog.Reset)
+	body := `{"model":"%s","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"Bash","parameters":{"type":"object"}}}]}`
+	for i, m := range []string{"zen/big-pickle", "zen/nemo-zero", "zen/kimi-k2.6"} {
+		zenSend(t, s, "/v1/chat/completions", strings.Replace(body, "%s", m, 1))
+		sent := got["opencode.ai"][i]
+		free := i < 2
+		if n := strings.Join(toolNames(sent), ","); (n == "bash,read") != free {
+			t.Errorf("%s: tools %s", m, n)
+		}
+		if (sent["stream"] == true) != free {
+			t.Errorf("%s: stream %v", m, sent["stream"])
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"regexp"
 	"slices"
 	"sort"
@@ -29,6 +30,20 @@ func (p Provider) Available() []catalog.Model {
 	if p.DecideOnly() {
 		return p.decideModels()
 	}
+	ms := p.available()
+	if p.Decides() {
+		// a gateway's Jev among its chat models, with its window and input
+		ms = slices.Clone(ms)
+		for i, m := range ms {
+			if p.DecidesModel(m.ID) {
+				ms[i] = withDecideFacts([]catalog.Model{m})[0]
+			}
+		}
+	}
+	return ms
+}
+
+func (p Provider) available() []catalog.Model {
 	signedIn := p.Account != nil && p.Account.models != nil
 	var known []catalog.Model
 	if signedIn {
@@ -117,7 +132,13 @@ func (p Provider) live() ([]catalog.Model, time.Time, bool) {
 	if p.IsPlugin() {
 		return nil, time.Time{}, false
 	}
-	return catalog.Live(p.ID)
+	type live struct {
+		ms []catalog.Model
+		at time.Time
+		ok bool
+	}
+	l := heldOf("fetched:"+p.ID, func() live { ms, at, ok := catalog.Live(p.ID); return live{ms, at, ok} })
+	return l.ms, l.at, l.ok
 }
 
 // Fetch asks the vendor which models it serves and remembers the answer.
@@ -142,6 +163,12 @@ func (p Provider) Refetch(ctx context.Context) ([]catalog.Model, []string, error
 	}
 	before := liveIDs(p.ID)
 	ms, err := p.fetch(ctx)
+	if err == nil && p.listsDecisions() {
+		// OpenRouter's decision models, listed apart from its chat ones
+		if _, derr := p.fetchDecide(p.Via(ctx)); derr != nil {
+			log.Println(p.ID + ": " + derr.Error())
+		}
+	}
 	if err != nil || len(before) == 0 {
 		return ms, nil, err
 	}
@@ -345,11 +372,14 @@ func FetchNew(timeout time.Duration) {
 	newFetches.Lock()
 	defer newFetches.Unlock()
 	for _, p := range All() {
-		if p.Account == nil || !p.Ready() {
+		// a list of decision models fetched before magpie kept their
+		// windows and input, or not fetched yet (ARNO on Discord)
+		decide := p.decideListDue()
+		if !decide && (p.Account == nil || !p.Ready()) {
 			continue
 		}
 		// a plugin's accounts were listed with the plugin's providers
-		if _, ok := p.Listed(); ok {
+		if _, ok := p.Listed(); ok && !decide {
 			continue
 		}
 		if t, ok := newFetches.m[p.ID]; ok && time.Since(t) < newFetchRetry {
@@ -357,7 +387,13 @@ func FetchNew(timeout time.Duration) {
 		}
 		newFetches.m[p.ID] = time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		if _, err := p.Fetch(ctx); err != nil {
+		var err error
+		if decide && p.Account == nil {
+			_, err = p.fetchDecide(p.Via(ctx))
+		} else {
+			_, err = p.Fetch(ctx)
+		}
+		if err != nil {
 			log.Println(p.ID + ": " + err.Error())
 		}
 		cancel()
@@ -850,7 +886,7 @@ func MakerPrice(model string) (catalog.Price, bool) {
 // EffectivePrice is what a call to a provider's model costs the user: the
 // price they set for that model, or for every model of that provider, or for
 // that model from any provider (settings' ModelPrices), else the provider's own list price, else its
-// maker's. The second return is false only when no price is known at all,
+// maker's, either at the provider's price rate (PriceRate). The second return is false only when no price is known at all,
 // which is not the same as a price of zero: that one is set, deliberately.
 //
 // A price here is the provider's tariff, not the model's: the same model
@@ -885,12 +921,30 @@ func EffectivePriceIn(s settings.Settings, providerID, model string) (catalog.Pr
 			}
 		}
 	}
-	if known {
-		if pr, ok := p.ListPrice(model); ok {
-			return pr, true
-		}
+	if !known {
+		return MakerPrice(model)
 	}
-	return MakerPrice(model)
+	pr, ok := p.ListPrice(model)
+	if !ok {
+		pr, ok = MakerPrice(model)
+	}
+	// what the provider bills against it (#819)
+	if ok && p.PriceRate > 0 {
+		pr = pr.Times(p.PriceRate)
+	}
+	return pr, ok
+}
+
+// PriceRateOK says what is wrong with a provider's price rate, "" when
+// nothing: from 0 (none) to 1000, in steps of 0.001.
+func PriceRateOK(r float64) string {
+	if math.IsNaN(r) || r < 0 || r > 1000 {
+		return "a price rate is from 0 to 1000"
+	}
+	if math.Abs(r*1000-math.Round(r*1000)) > 1e-6 {
+		return "a price rate has at most three decimals, like 0.125"
+	}
+	return ""
 }
 
 // byIDOrWas is the provider with that id, else the one it was renamed from.
@@ -1064,18 +1118,7 @@ func buildEntries() []Entry {
 // with what the user set taken over the vendor's list and models.dev.
 func entryFor(p Provider, m catalog.Model, s settings.Settings) Entry {
 	ctx := p.WindowOf(m)
-	output := m.Output
-	if output == 0 {
-		output = catalog.OutputOf(m.ID)
-	}
-	if n := outputOf(s, p.ID, m.ID); n > 0 {
-		output = n
-	}
-	// an agent asks for the reply limit it is told, and Command Code
-	// refuses one above its own
-	if p.ID == CommandCodePlanID && output > CommandCodeMaxOutput {
-		output = CommandCodeMaxOutput
-	}
+	output := p.replyLimit(m, s)
 	images := m.Images || catalog.SeesImages(m.ID)
 	if m.ImageInput != nil {
 		images = *m.ImageInput
@@ -1270,6 +1313,29 @@ func (p Provider) ContextOf(model string) int {
 // model's own, else the one given for every model of its provider, else 0 for
 // the vendor's own list and models.dev to answer. It mirrors ContextOf, which
 // the user sets on the provider itself.
+// ReplyLimit is the most a reply of the provider's model may hold, in
+// tokens, as agents are told it and the Gateway's model list shows it:
+// the user's Max output, else the vendor's list's, else models.dev's.
+func (p Provider) ReplyLimit(m catalog.Model) int {
+	return p.replyLimit(m, settings.Load())
+}
+
+func (p Provider) replyLimit(m catalog.Model, s settings.Settings) int {
+	output := m.Output
+	if output == 0 {
+		output = catalog.OutputOf(m.ID)
+	}
+	if n := outputOf(s, p.ID, m.ID); n > 0 {
+		output = n
+	}
+	// an agent asks for the reply limit it is told, and Command Code
+	// refuses one above its own
+	if p.ID == CommandCodePlanID && output > CommandCodeMaxOutput {
+		output = CommandCodeMaxOutput
+	}
+	return output
+}
+
 func outputOf(s settings.Settings, providerID, model string) int {
 	if n := s.ModelOutputs[providerID+"/"+model]; n > 0 {
 		return n

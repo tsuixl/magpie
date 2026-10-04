@@ -93,6 +93,11 @@ type Agent struct {
 	// UA is what the agent's User-Agent begins with, lower-case: how the
 	// gateway tells its requests from others'
 	UA []string
+	// ListsModels: the agent's own model menu is the gateway's /v1/models
+	// as asked with its key, so the models picked on the Agents page for it
+	// (settings.HiddenModels) are its menu, though no field of its picks
+	// among the catalog (Cursor Private Inference)
+	ListsModels bool
 	// Sync, for an agent that reads magpie's models from a file of its own
 	// rather than asking the gateway, rewrites that list as the catalog is
 	// now — where magpie wrote one; nothing else changes (see SyncCatalog).
@@ -171,6 +176,13 @@ type Agent struct {
 	// names, never taken for one of magpie's models nor moved by what
 	// matches the picker (RenameRefs moves the names in it).
 	SplitSuffix func(v string) (model, suffix string, one bool)
+	// Spelled, when set, says whether a value of the agent's fields is
+	// spelled as one of magpie's there (prefixed: it starts with
+	// "magpie/", its provider in the agent): one that isn't is a model of
+	// one of the agent's own providers, never magpie's, even when magpie
+	// has a provider of the same name (OpenHanako's own
+	// deepseek/deepseek-v4-pro read as magpie's deepseek, #835).
+	Spelled func(v string) bool
 	// detect, when set, says whether the agent is here in place of looking
 	// for its files and binary: a distro's, probed once.
 	detect func() bool

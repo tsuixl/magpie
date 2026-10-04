@@ -182,7 +182,7 @@ func openChamber(home, cfg string) *Agent {
 		return edit.DelJSON(ocPath, "provider."+magpieID)
 	}
 	return &Agent{
-		ID: "openchamber", Name: "OpenChamber", Icon: "openchamber", Aliases: []string{"chamber"},
+		ID: "openchamber", Name: "OpenChamber", Icon: "openchamber", Aliases: []string{"chamber"}, Spelled: openCodeSpelled(ocPath, gatewayV1),
 		// its model requests are its OpenCode's, and counted as OpenCode's
 		Bin: "openchamber", Dir: s.dir, Path: s.prefs(),
 		Notice: func() string {

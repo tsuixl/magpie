@@ -101,6 +101,8 @@ const usage = `magpie — one place to pick every agent's model
   magpie quota [<provider>] [--json]  what is left of every subscription, plan and key balance
   magpie quota wait <provider|account> [--timeout <d>] [--quiet]
                                   block until that subscription (any of its accounts) or account has allowance again
+  magpie quota history [<provider|account>] [--days N] [--json]
+                                  each window's readings over time, kept 45 days
   magpie sync                     refresh the model catalog and vendor model lists
   magpie agents                   list every supported agent
   magpie update [check] [--proxy <url>] [--mirror <prefix>]
@@ -190,10 +192,14 @@ func run(args []string) error {
 	}
 	makeDirs()
 	settings.Migrate()
+	// the providers and settings read once for every agent's fields, which
+	// the moves below look at (a write among them reads them again)
+	release := provider.Hold()
 	agent.RenameLegacy()
 	agent.MoveCursorEfforts()
 	agent.MoveAntigravityEfforts()
 	agent.MoveOffAccountIDs()
+	release()
 	// a provider added, edited or removed, or a list fetched anew, reaches
 	// the model lists agents keep in files of their own
 	catalog.Changed = agent.SyncCatalog
@@ -206,6 +212,9 @@ func run(args []string) error {
 	// something else writing the file fails every session there until
 	// magpie writes its own list again
 	gateway.WhileServing = append(gateway.WhileServing, agent.KeepDshWired)
+	// and Cursor Private Inference's variables, which the Mac's launchd
+	// forgets at a restart, for the gateway's address now
+	gateway.WhileServing = append(gateway.WhileServing, agent.KeepCursorLocalEnv)
 	// and the request archive, when it is on, goes to the bucket sync is to
 	gateway.ArchiveBucket = func() (gateway.Putter, bool) {
 		if b, ok := davsync.S3Bucket(); ok {

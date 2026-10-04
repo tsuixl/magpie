@@ -179,6 +179,7 @@
     </div>
     <div class="led-head"><p class="led-sum" id="ledSum"></p><span class="grow"></span><span class="led-arch" id="ledArchive"></span></div>
     <div class="led-wrap" id="ledWrap"></div>
+            <div class="led-hscroll" id="ledHScroll" hidden><div></div></div>
     <div class="led-pager" id="ledPager" hidden></div>
     <p class="usage-note" id="ledNote"></p>
   </div>
@@ -258,7 +259,7 @@
         <div id="codexAgentsV1Segs"></div>
       </div>
       <div class="row pref">
-        <div class="who"><div class="name" data-t>Long conversations</div><div class="sub" data-t>Codex and Claude Code compact a conversation at 272K tokens on a model with a larger window, as they do on OpenAI’s and Anthropic’s own; the model’s full window lets it grow further, with every turn slower and costlier</div></div>
+        <div class="who"><div class="name" data-t>Long conversations</div><div class="sub" data-t>Codex and Claude Code compact a conversation at 272K tokens on a model with a larger window; in Claude Code a Claude model runs to its own window, 1M for a [1m] one, as Anthropic runs it. The model’s full window lets any conversation grow further, with every turn slower and costlier</div></div>
         <div id="fullContextSegs"></div>
       </div>
       <div class="row pref" id="codexTitlesRow">
@@ -327,6 +328,7 @@
       <button type="button" role="tab" id="warmTab-claude" data-warm="claude" aria-controls="claudeWarmList">Claude Code</button>
       <button type="button" role="tab" id="warmTab-wb" data-warm="wb" aria-controls="wbList" hidden>WorkBuddy</button>
       <button type="button" role="tab" id="warmTab-trae" data-warm="trae" aria-controls="traeList" hidden>Trae CN</button>
+      <button type="button" role="tab" id="warmTab-minimax" data-warm="minimax" aria-controls="minimaxList" hidden>MiniMax Code</button>
     </div></div>
     <div class="warm-panes">
     <div class="list prefs" id="codexWarmList" role="tabpanel" aria-labelledby="warmTab-codex">
@@ -361,6 +363,12 @@
         <div id="traeCheckinSegs"></div>
       </div>
     </div>
+    <div class="list prefs" id="minimaxList" role="tabpanel" aria-labelledby="warmTab-minimax">
+      <div class="row pref" id="minimaxCheckinRow">
+        <div class="who"><div class="name" data-t>Daily check-in</div><div class="sub" id="minimaxCheckinSub"></div></div>
+        <div id="minimaxCheckinSegs"></div>
+      </div>
+    </div>
     </div>
   </section>
   <section class="set-page" id="setPage-network" role="tabpanel" aria-labelledby="setTab-network">
@@ -380,6 +388,8 @@
     <div class="list prefs" id="imagesList"></div>
     <div class="row-head"><span class="label" data-t>Web search</span></div>
     <div class="list prefs" id="searchList"></div>
+    <div class="row-head"><span class="label" data-t>Replies</span></div>
+    <div class="list prefs" id="replyList"></div>
   </section>
   <section class="set-page" id="setPage-privacy" role="tabpanel" aria-labelledby="setTab-privacy">
     <div class="list prefs" id="redactList"></div>

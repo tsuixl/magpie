@@ -78,11 +78,18 @@ var pathVars = sync.OnceValue(func() map[string]bool {
 	return vs
 })
 
-// usable says whether a folder variable's value can be built on: rooted,
-// or starting with ~, which the agents' variables take and which stands for
-// the home main has checked.
-func usable(v string) bool {
-	return rooted(v) || strings.HasPrefix(v, "~")
+// usable accepts rooted paths, and a home-relative path only for variables
+// whose readers expand it. Most agent paths, like the XDG and Windows
+// folders, are used as given and would put a literal ~ under the working folder.
+func usable(name, v string) bool {
+	if rooted(v) {
+		return true
+	}
+	switch name {
+	case "PI_CODING_AGENT_DIR", "PI_CODING_AGENT_SESSION_DIR", "HANA_HOME", "T3CODE_HOME":
+		return v == "~" || strings.HasPrefix(v, "~/") || (runtime.GOOS == "windows" && strings.HasPrefix(v, `~\`))
+	}
+	return false
 }
 
 // LookupEnv is os.LookupEnv for what magpie itself reads: a folder variable
@@ -93,7 +100,7 @@ func usable(v string) bool {
 // desktop app (proc.UserPath) are read through here too.
 func LookupEnv(name string) (string, bool) {
 	v, ok := os.LookupEnv(name)
-	if ok && v != "" && pathVars()[name] && !usable(v) {
+	if ok && v != "" && pathVars()[name] && !usable(name, v) {
 		return "", false
 	}
 	return v, ok
@@ -110,7 +117,7 @@ func Getenv(name string) string {
 // variables holding a relative path, which LookupEnv passes over.
 func CheckEnv() (ignored []string, err error) {
 	for v := range pathVars() {
-		if x := os.Getenv(v); x != "" && !usable(x) {
+		if x := os.Getenv(v); x != "" && !usable(v, x) {
 			ignored = append(ignored, v)
 		}
 	}

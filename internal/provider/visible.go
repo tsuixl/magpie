@@ -31,8 +31,8 @@ func (e Entry) Names() []string {
 
 // VisibleTo is what agent's lists are narrowed to, and whether they are.
 func VisibleTo(agent string) ([]string, bool) {
-	names, ok := settings.Load().Visible[strings.ToLower(agent)]
-	return names, ok
+	names, ok := heldSettings().Visible[strings.ToLower(agent)]
+	return slices.Clone(names), ok
 }
 
 // Shows reports whether a visibility shows e.
@@ -91,7 +91,7 @@ func ListedFor(agent string) (listed, kept []Entry) {
 
 // HiddenModels are the ids of the entries taken out of agent's lists.
 func HiddenModels(agent string) map[string]bool {
-	ids := settings.Load().HiddenModels[strings.ToLower(agent)]
+	ids := heldSettings().HiddenModels[strings.ToLower(agent)]
 	out := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		out[id] = true

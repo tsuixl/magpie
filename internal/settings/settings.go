@@ -25,6 +25,7 @@ import (
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/redact"
 	"github.com/yetone/magpie/internal/steady"
 )
@@ -122,6 +123,16 @@ type Settings struct {
 	// signed-in Trae CN account (its plugin's) once a Beijing day, claiming
 	// the credits it gives.
 	TraeCheckin bool `json:"traeCheckin,omitempty"`
+	// MiniMaxCheckin presses MiniMax Code's daily check-in (签到) for each
+	// signed-in MiniMax Code (China) account (its plugin's) once a Beijing
+	// day, claiming the credits it gives (#811).
+	MiniMaxCheckin bool `json:"minimaxCheckin,omitempty"`
+	// MemberModel has a reply's model name the routing group's member
+	// that answered, as magpie's provider/model id (workbuddy/glm-5.3-flash),
+	// rather than the vendor's own name for it, for agents that count
+	// usage by the reply's model (#822). Claude Code, Claude Desktop and
+	// Codex always get the vendor's name: they read it themselves.
+	MemberModel bool `json:"memberModel,omitempty"`
 	// NoStats stops the one event a day that counts magpie's users (see
 	// internal/stats).
 	NoStats bool `json:"noStats,omitempty"`
@@ -591,7 +602,10 @@ func Load() Settings {
 	fileMu.RLock()
 	defer fileMu.RUnlock()
 	var s Settings
-	if b, err := steady.ReadFile(Path()); err == nil {
+	// read again only once the file changed: a look at the agents asks for
+	// the settings for every model of every agent (hundreds of reads, a
+	// fifth of the Agents page's wait)
+	if b, err := filememo.Read("settings", Path(), func(b []byte) ([]byte, error) { return b, nil }); err == nil {
 		_ = json.Unmarshal(bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")), &s)
 	}
 	return s.normal()
@@ -621,6 +635,7 @@ func CheckProxy(p string) error {
 func Save(s Settings) error {
 	fileMu.Lock()
 	defer fileMu.Unlock()
+	defer filememo.Forget() // read again, where a request holds it
 	s = s.normal()
 	if !slices.Contains(Themes, s.Theme) {
 		return fmt.Errorf("theme must be one of %v, not %q", Themes, s.Theme)
@@ -740,7 +755,14 @@ func Save(s Settings) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return edit.WriteAtomic(Path(), append(b, '\n'))
+	if err := edit.WriteAtomic(Path(), append(b, '\n')); err != nil {
+		return err
+	}
+	// a request holding the catalog holds the settings too: it sees these
+	if catalog.Forget != nil {
+		catalog.Forget()
+	}
+	return nil
 }
 
 func (s Settings) normal() Settings {

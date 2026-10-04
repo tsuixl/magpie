@@ -51,6 +51,10 @@ jobs:
           done
           test "$READY" = 1
 
+          # a NAS panel's terminal opens bash or sh, with magpie on PATH
+          docker exec smoke /bin/bash -c 'magpie healthcheck && ls /config >/dev/null'
+          docker exec smoke /bin/sh -c 'echo sh works'
+
           CODE=$(curl -s -o /tmp/body.json -w '%{http_code}' \
             -H 'Authorization: Bearer magpie' -H 'Content-Type: application/json' \
             -d '{"model":"ci-unknown-model","messages":[{"role":"user","content":"hi"}]}' \

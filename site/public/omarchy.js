@@ -246,6 +246,9 @@
     light.addEventListener("change", () => {
       if (!cur || st.pick || status === "live") return;
       const live = st.live && st.live.mode === scheme() && fromMagpie(st.live);
+      // the theme magpie last told is off the desktop now: a reload shows
+      // what this shows, not that one
+      if (!live && st.live) { delete st.live; save(); }
       paint(live || builtin(GUESS[scheme()]));
     });
     for (const name of ["loopback-network", "local-network-access"]) {

@@ -65,7 +65,7 @@ func LoginUsage(ctx context.Context, agent string) map[string]SubscriptionQuota 
 		wg.Add(1)
 		go func(l Login) {
 			defer wg.Done()
-			q := keepLast(loginQuota(ctx, l), l.User)
+			q := keepLast(readNow(loginQuota(ctx, l)), l.User)
 			if q.Error != "" && ok && q.Provider != "claude" {
 				q = e.q // a hiccup keeps what was known
 			}
@@ -205,6 +205,8 @@ func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
 		q.Windows = ws
 		if err != nil {
 			q.Error = err.Error()
+		} else {
+			q.ReadAt = claudeReadAt(l.User)
 		}
 		return q
 	}
@@ -219,7 +221,9 @@ func loginQuota(ctx context.Context, l Login) SubscriptionQuota {
 	}
 	if err == nil {
 		if l.Agent == "claude" {
-			q.Windows, err = claudeWindows(ctx, l.User, true)
+			if q.Windows, err = claudeWindows(ctx, l.User, true); err == nil {
+				q.ReadAt = claudeReadAt(l.User)
+			}
 		} else {
 			var plan string
 			if plan, q.Windows, q.Resets, q.Balance, err = codexWindows(ctx, tok, accountID); plan != "" {

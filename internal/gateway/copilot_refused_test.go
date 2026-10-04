@@ -39,6 +39,8 @@ func TestCopilotAutoRefusedThroughGateway(t *testing.T) {
 			io.WriteString(w, `{"data":[
 			  {"id":"claude-haiku-4.5","name":"Claude Haiku 4.5","model_picker_enabled":true,"policy":{"state":"enabled"},"supported_endpoints":["/chat/completions","/v1/messages"],"capabilities":{"type":"chat"}},
 			  {"id":"gpt-4.1","name":"GPT-4.1","model_picker_enabled":true,"is_chat_default":true,"is_chat_fallback":true,"policy":{"state":"enabled"},"supported_endpoints":["/chat/completions"],"capabilities":{"type":"chat"}}]}`)
+		case "/auto":
+			w.WriteHeader(404) // Auto v2 not offered: /models/session
 		case "/models/session":
 			io.WriteString(w, `{"session_token":"auto-tok","selected_model":"claude-haiku-4.5","available_models":["claude-haiku-4.5","gpt-4.1"],"expires_at":`+
 				mustString(time.Now().Add(time.Hour).Unix())+`}`)

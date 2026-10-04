@@ -214,6 +214,7 @@ type View struct {
 	Instructions *InstructionsView `json:"instructions"`
 	Dir          string            `json:"dir"`
 	Backups      string            `json:"backups"`
+	SkillGroups  []SkillGroup      `json:"skillGroups"`
 }
 
 // Read is the whole page: the library, and what's found in the agents.
@@ -319,6 +320,7 @@ func Read(problems []Problem) (*View, error) {
 	}
 	v.FoundSkills = foundSkills(l)
 	v.Projects = projectViews(l, problems)
+	v.SkillGroups = l.skillGroups()
 	return v, nil
 }
 

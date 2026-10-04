@@ -97,6 +97,10 @@ func (g Group) Live() Group {
 }
 
 // Group is a routing group.
+// ContextSmallest is a group's Context when agents are told the window of
+// its smallest member.
+const ContextSmallest = -1
+
 type Group struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
@@ -146,6 +150,9 @@ type Group struct {
 	Effort string `json:"effort,omitempty"`
 	// Context is how long a request the user says the group takes, in
 	// tokens: agents are told it rather than its largest member's.
+	// ContextSmallest tells them its smallest member's, whichever that is
+	// as the members change (Mikan on Discord), so the agent compacts
+	// before any member would turn the conversation away.
 	Context int `json:"context,omitempty"`
 	// Levels are the reasoning levels agents are offered for the group,
 	// lowest first, when the user names them (#295): rather than those
@@ -218,7 +225,7 @@ func Groups() []Group {
 }
 
 func groupsIn(entries []Entry) []Group {
-	f := load()
+	f := heldOf("file", load)
 	var out []Group
 	hidden := map[string]bool{}
 	for _, g := range f.Groups {
@@ -231,7 +238,7 @@ func groupsIn(entries []Entry) []Group {
 	if f.NoAutoGroups {
 		return orderedGroups(out, f.GroupOrder)
 	}
-	for _, g := range autoGroups(entries, settings.Load().ModelSameAs) {
+	for _, g := range autoGroups(entries, heldSettings().ModelSameAs) {
 		if slices.ContainsFunc(out, func(o Group) bool { return o.ID == g.ID }) {
 			continue // the user changed it: theirs now
 		}
@@ -554,6 +561,7 @@ func groupEntries(entries []Entry) []Entry {
 		// gateway sends max to the members that have no ultra
 		ultra := false
 		chatgpt := false // a ChatGPT account answers for a member
+		smallest := 0    // the smallest window a member is known to have
 		for i, m := range ms {
 			chatgpt = chatgpt || m.Provider.Account != nil && m.Provider.Account.Agent == "codex"
 			if !slices.ContainsFunc(ms[:i], func(o Member) bool { return o.Provider.ID == m.Provider.ID }) {
@@ -593,6 +601,9 @@ func groupEntries(entries []Entry) []Entry {
 			// for the one free model among them that holds 200k (#712)
 			if ctx > e.Context {
 				e.Context = ctx
+			}
+			if ctx > 0 && (smallest == 0 || ctx < smallest) {
+				smallest = ctx
 			}
 			if i == 0 {
 				e.ImageInput = imageInput
@@ -654,6 +665,8 @@ func groupEntries(entries []Entry) []Entry {
 		ruledEntry(&e, g.Live(), ms, entries)
 		if g.Context > 0 {
 			e.Context = g.Context
+		} else if g.Context == ContextSmallest && smallest > 0 {
+			e.Context = smallest
 		}
 		e.Family = g.Family
 		out = append(out, e)
@@ -693,6 +706,9 @@ func SaveGroup(g Group) error {
 		g.Name = g.ID
 	}
 	g.FirstToken = max(g.FirstToken, 0)
+	if g.Context < 0 {
+		g.Context = ContextSmallest
+	}
 	// the members it names and its patterns, without what the patterns
 	// matched when it was read: those are found again below, and stored
 	// never
@@ -940,6 +956,55 @@ func DeleteGroup(id string) error {
 		return fmt.Errorf("no group %q", id)
 	}
 	return store(f)
+}
+
+// DeleteGroups removes several groups at once, as DeleteGroup does each
+// (lc on Discord: they could only be removed one at a time). It is all or
+// none: refused, before any is removed, when one isn't there or a group
+// left holds one as a member or classifier; one held only by another of
+// them goes after it.
+func DeleteGroups(ids []string) error {
+	in := map[string]bool{}
+	var left []string
+	for _, id := range ids {
+		if !in[id] {
+			in[id] = true
+			left = append(left, id)
+		}
+	}
+	all := groupsIn(providerEntries())
+	for _, id := range left {
+		if !slices.ContainsFunc(all, func(g Group) bool { return g.ID == id && !g.Hidden }) {
+			return fmt.Errorf("no group %q", id)
+		}
+	}
+	for _, g := range all {
+		if g.Hidden || in[g.ID] {
+			continue
+		}
+		for _, id := range left {
+			if slices.Contains(g.Members, GroupPrefix+id) {
+				return fmt.Errorf("%s is in %s: take it out first", id, g.Name)
+			}
+			if g.Classifier == GroupPrefix+id {
+				return fmt.Errorf("%s is %s's classifier: choose another first", id, g.Name)
+			}
+		}
+	}
+	for len(left) > 0 {
+		var next []string
+		var last error
+		for _, id := range left {
+			if err := DeleteGroup(id); err != nil {
+				next, last = append(next, id), err
+			}
+		}
+		if len(next) == len(left) {
+			return last
+		}
+		left = next
+	}
+	return nil
 }
 
 // RemovedGroups are the found groups the user removed, whether or not

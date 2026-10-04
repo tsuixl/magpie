@@ -135,6 +135,30 @@ func usesMagpie(vals ...string) bool {
 	return false
 }
 
+// prefixed is an agent's Spelled whose values of magpie's are all
+// magpie/<ref>, as its provider/model names them.
+func prefixed(v string) bool { return strings.HasPrefix(v, magpieID+"/") }
+
+// openCodeSpelled is the Spelled of an OpenCode config at path: magpie's
+// provider, or one of the file's own that sends to magpie's gateway (v1),
+// as openCodeRef names a model there.
+func openCodeSpelled(path string, v1 func() string) func(string) bool {
+	return func(v string) bool {
+		if prefixed(v) {
+			return true
+		}
+		p, ref, ok := strings.Cut(v, "/")
+		if !ok || p == "" {
+			return false
+		}
+		if !strings.Contains(p, ".") {
+			base, _ := edit.GetJSON(path, "provider."+p+".options.baseURL")
+			return sameGateway(base, v1())
+		}
+		return ownGatewayProvider(path, ref, v1()) == p
+	}
+}
+
 // pair joins a provider field and a model field into one "provider/model"
 // value, which is how OpenCode already spells it and how people think of it.
 func pairGet(get func(string) (string, bool), pKey, mKey string) func() string {
@@ -581,7 +605,7 @@ func openCodeLike(at place, id, name, icon, bin, dir, auth string, ua []string, 
 		}
 	}
 	return &Agent{
-		ID: id, Name: name, Icon: icon, Aliases: aliases,
+		ID: id, Name: name, Icon: icon, Aliases: aliases, Spelled: openCodeSpelled(path, at.v1),
 		UA:  ua,
 		Bin: bin, Dir: dir, Path: path,
 		Check: func() string {
@@ -772,7 +796,7 @@ func piLike(at place, id, name, dir string) *Agent {
 		return edit.SetJSON(modelsPath, edit.KV{Path: "providers." + magpieID, Value: magpieProviderJSONAt("pi", id, at.gw())})
 	}
 	return &Agent{
-		ID: id, Name: name, Icon: id, Bin: id, Dir: dir, Path: path,
+		ID: id, Name: name, Icon: id, Bin: id, Dir: dir, Path: path, Spelled: prefixed,
 		Check: func() string {
 			if p, _ := get("defaultProvider"); p != magpieID {
 				return ""
@@ -866,7 +890,7 @@ func goose(home, cfg string) *Agent {
 	set := func(kvs ...edit.KV) error { return edit.SetYAMLTop(path, kvs...) }
 	provider := gooseProviderPath(path)
 	return &Agent{
-		ID: "goose", Name: "Goose", Icon: "goose", Bin: "goose", Dir: filepath.Dir(path), Path: path,
+		ID: "goose", Name: "Goose", Icon: "goose", Bin: "goose", Dir: filepath.Dir(path), Path: path, Spelled: prefixed,
 		UA: []string{"goose"},
 		Check: func() string {
 			if p, _ := get("GOOSE_PROVIDER"); p != gooseProviderID {
@@ -1125,7 +1149,7 @@ func crushAt(at place, path, data string) *Agent {
 		}
 	}
 	return &Agent{
-		ID: "crush", Name: "Crush", Icon: "crush", Bin: "crush", Dir: filepath.Dir(path), Path: path,
+		ID: "crush", Name: "Crush", Icon: "crush", Bin: "crush", Dir: filepath.Dir(path), Path: path, Spelled: prefixed,
 		UA: []string{"crush"},
 		Check: func() string {
 			large, _ := pick("models.large.provider")

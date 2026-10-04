@@ -57,7 +57,7 @@ func fxIn(at place) *Agent {
 		return edit.DelJSON(path, keys...)
 	}
 	return &Agent{
-		ID: "fx", Name: "fx", Icon: "fx",
+		ID: "fx", Name: "fx", Icon: "fx", Spelled: prefixed,
 		Bin: "fx", Dir: dir, Path: path,
 		Sync: func() error {
 			return syncJSON(path, "providers."+magpieID, func() any { return fxProvider(fxModels(path)[magpieID]) })

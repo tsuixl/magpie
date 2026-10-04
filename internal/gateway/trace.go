@@ -246,6 +246,9 @@ type Try struct {
 	// Codex resets was spent by itself (the user's setting) — on Who, and
 	// what spending it did — and the request asked again
 	Reset *AutoReset `json:"reset,omitempty"`
+	// Auto: the models Copilot's Auto picked for it, in turn — where each
+	// pick came from and Copilot's refusal of it — Model being "auto"
+	Auto []provider.AutoPick `json:"auto,omitempty"`
 }
 
 // AutoReset is a Codex or Claude reset spent by itself, on Who's account.

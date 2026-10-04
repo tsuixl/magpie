@@ -15,6 +15,13 @@ import (
 // every turn with a model its provider does not list. internal/gateway,
 // internal/provider and internal/usage isolate themselves the same way.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == DryRunArg {
+		if err := DryRun(os.Args[2]); err != nil {
+			os.Stderr.WriteString(err.Error())
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	// whether Codex's ChatGPT account is out of its allowance is asked of
 	// OpenAI; never from here
 	codexUsedUp = func() bool { return false }

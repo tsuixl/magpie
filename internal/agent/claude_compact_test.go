@@ -11,9 +11,9 @@ import (
 )
 
 // TestClaudeCompactWindow: on magpie Claude Code compacts at the working
-// window (CLAUDE_CODE_AUTO_COMPACT_WINDOW), a [1m] model too, so a 1M model's
+// window (CLAUDE_CODE_AUTO_COMPACT_WINDOW), another vendor's [1m] model too, so a 1M model's
 // conversation isn't run to 1M with every turn sending all of it (X: Chen);
-// settings.FullContext takes it away, a value the user set is theirs, and
+// settings.FullContext takes it away, a Claude model runs to its own, a value the user set is theirs, and
 // Claude Code as installed has none.
 func TestClaudeCompactWindow(t *testing.T) {
 	home := t.TempDir()
@@ -22,10 +22,10 @@ func TestClaudeCompactWindow(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
 	if err := provider.Save(provider.Provider{ID: "v", Name: "V", Chat: "https://example.test/v1", Key: "k",
-		Models: []string{"big"}}); err != nil {
+		Models: []string{"big", "claude-opus-5-5"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := catalog.SaveLive("v", "https://example.test/v1", []catalog.Model{{ID: "big", Context: 1000000}}); err != nil {
+	if err := catalog.SaveLive("v", "https://example.test/v1", []catalog.Model{{ID: "big", Context: 1000000}, {ID: "claude-opus-5-5", Context: 1000000}}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(home, ".claude", "settings.json")
@@ -52,6 +52,21 @@ func TestClaudeCompactWindow(t *testing.T) {
 	must(a.Sync())
 	if compact() != "272000" {
 		t.Fatalf("back to the working window: %q", compact())
+	}
+	// a Claude model runs to its whole window, as Anthropic runs a [1m]
+	// one (Max on Discord: a [1m] model stopped at 272K), and another
+	// vendor's is capped again after it
+	must(a.Field("model").Set("v/claude-opus-5-5[1m]"))
+	if compact() != "" {
+		t.Fatalf("a Claude model: %q", compact())
+	}
+	must(a.Sync())
+	if compact() != "" {
+		t.Fatalf("a Claude model, synced: %q", compact())
+	}
+	must(a.Field("model").Set("v/big[1m]"))
+	if compact() != "272000" {
+		t.Fatalf("after a Claude model: %q", compact())
 	}
 	must(a.Field("model").Set(""))
 	if compact() != "" {

@@ -574,6 +574,8 @@
   function trySaid(r, i) {
     const tr = r.tries[i], w = tried(r, tr), agent = agentName(r.agent);
     let name = w ? `${who(w)} (${w.model})` : tr.id;
+    // Copilot's Auto: the model it picked last, which this try went as
+    if (w && tr.auto?.length) name = `${who(w)} (${w.model} → ${tr.auto[tr.auto.length - 1].model})`;
     if (tr.effort) name += " " + t("at {level} reasoning", { level: tr.effort });
     if (!tr.done) return t("{who} is answering…", { who: name });
     // a Codex reset spent by itself: with Codex's own sign-in the one try
@@ -1155,6 +1157,16 @@
     for (const a of asides(r)) items.push([a, "aside"]);
     r.tries.forEach((tr, i) => {
       items.push([tryWhy(r, i), tr.done ? (tryOk(tr) ? "ok" : "bad") : "wait"]);
+      // each model Copilot's Auto picked for it, where from, and whether
+      // Copilot refused it, on which API and with Auto's session token or
+      // without (#256)
+      for (const p of tr.auto || []) {
+        let s = t("Copilot's Auto picked {model} ({via})", { model: p.model, via: p.via === "fallback" ? t("the model the account may pick by hand") : p.via });
+        if (p.skipped) s += " · " + t("not from /auto: {why}", { why: p.skipped });
+        if (p.api) s += " · " + t(p.session ? "sent to {api} with Auto's session token" : "sent to {api}", { api: p.api });
+        if (p.refused) s += " · " + t("Copilot refused it: {error}", { error: p.refused });
+        items.push([s, "aside"]);
+      }
       // what the vendor said, word for word: the why above is magpie's reading of it
       if (tr.done && !tryOk(tr) && tr.error) {
         const hint = HINTS.find((h) => tr.error.endsWith(" — " + h));
@@ -2382,31 +2394,133 @@
     if (groupArranging) { groupRenderPending = true; return; }
     steady(drawGroups);
   }
+  // gSel: the groups picked to be removed together, while picking (lc on
+  // Discord: they could only be removed one at a time); null otherwise
+  let gSel = null;
   function drawGroups() {
+    const shown = groups.groups.filter((g) => !g.hidden), hidden = groups.groups.filter((g) => g.hidden);
+    if (gSel) gSel = new Set([...gSel].filter((id) => shown.some((g) => g.id === id)));
+    if (gSel && !shown.length) gSel = null;
     const newBtn = el("button", "text", t("New group"));
-    newBtn.onclick = () => { gEdit = { id: "", draft: { name: "", members: [], match: [], matched: [], fast: [], off: [], routing: "", affinity: "", rules: [] } }; renderGroups(); };
-    gHead.replaceChildren(el("span", "label", t("Routing groups")), el("span", "grow"), el("span", "note", t("models agents pick as one")), newBtn);
+    newBtn.onclick = () => { gSel = null; gEdit = { id: "", draft: { name: "", members: [], match: [], matched: [], fast: [], off: [], routing: "", affinity: "", rules: [] } }; renderGroups(); };
+    const head = [el("span", "label", t("Routing groups")), el("span", "grow"), el("span", "note", t("models agents pick as one"))];
+    if (!gSel) {
+      // several removed at once: pick them, then Remove
+      if (shown.length > 1) {
+        const pick = el("button", "text rt-gselect", t("Select"));
+        pick.title = t("Pick several groups to remove together");
+        pick.onclick = () => { gEdit = null; gSel = new Set(); renderGroups(); };
+        head.push(pick);
+      }
+      head.push(newBtn);
+    }
+    gHead.replaceChildren(...head);
     drawFound();
     const rows = [];
+    if (gSel) rows.push(selectBar(shown));
     if (gEdit && !gEdit.id) rows.push(groupEditor(null));
-    const shown = groups.groups.filter((g) => !g.hidden), hidden = groups.groups.filter((g) => g.hidden);
-    for (const g of shown) rows.push(gEdit?.id === g.id ? groupEditor(g) : groupRow(g));
+    for (const g of shown) rows.push(gSel ? pickedRow(g) : gEdit?.id === g.id ? groupEditor(g) : groupRow(g));
     if (!rows.length) rows.push(el("div", "none rt-gnone", groups.found === false
       ? t("No group yet. New group makes one of any models you like.")
       : t("No group yet. A model two of your providers serve becomes one on its own; New group makes one of any models you like.")));
-    if (hidden.length) {
+    // the found groups removed stay removed, magpie doesn't make them
+    // again: not listed, one line under the list says how many, and its
+    // menu brings one back. With found groups off, none would be anyway.
+    if (hidden.length && groups.found !== false) {
       const h = el("div", "rt-ghidden");
-      h.append(el("span", "", t("Removed:")));
-      for (const g of hidden) {
-        const b = el("button", "text", g.id.replace(/^auto-/, ""));
-        b.title = t("Bring it back");
-        b.onclick = () => groupAction("show", { id: g.id }, t("{name} is back", { name: g.id }));
-        h.append(b);
-      }
+      const b = el("button", "text rt-gremoved");
+      b.type = "button";
+      b.setAttribute("aria-haspopup", "menu");
+      b.append(el("span", "", t(hidden.length === 1 ? "1 found group removed" : "{n} found groups removed", { n: hidden.length })), svg(CHEV, 11, 1.6));
+      b.title = t("magpie doesn't make them again. Click to bring one back.");
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const again = agentMenu?.anchor === b;
+        closeAgentMenu();
+        if (again) return;
+        openRowMenu(b, hidden.map((g) => ({ name: g.id.replace(/^auto-/, ""), icon: REAPPLY, tip: t("Bring it back"),
+          run: () => groupAction("show", { id: g.id }, t("{name} is back", { name: g.id })) })));
+      };
+      h.append(b);
       rows.push(h);
     }
     gList.replaceChildren(...rows);
     renderPools();
+  }
+  // selectBar: over the groups while picking: all or none, how many are
+  // picked, Remove them (a second click, as it can't be undone for the
+  // groups the user made), and Done
+  function selectBar(shown) {
+    const bar = el("div", "rt-gsel");
+    const all = el("input");
+    all.type = "checkbox";
+    all.setAttribute("aria-label", t("Select every group"));
+    const n = el("span", "note");
+    const rm = el("button", "text danger rt-gremove");
+    rm.type = "button";
+    const done = el("button", "text", t("Done"));
+    done.type = "button";
+    done.onclick = () => { gSel = null; renderGroups(); };
+    let armed = 0;
+    const sync = () => {
+      const k = gSel.size;
+      all.checked = k > 0 && k === shown.length;
+      all.indeterminate = k > 0 && k < shown.length;
+      n.textContent = k ? t("{n} selected", { n: k }) : t("Pick the groups to remove");
+      rm.disabled = !k;
+      if (!k) armed = 0;
+      rm.textContent = armed ? t("Remove {n}? Click again", { n: k }) : t("Remove");
+      rm.classList.toggle("armed", !!armed);
+      for (const r of gList.querySelectorAll(".rt-gpick")) {
+        const on = gSel.has(r.dataset.id);
+        r.classList.toggle("on", on);
+        r.querySelector("input").checked = on;
+      }
+    };
+    bar.sync = sync;
+    all.onchange = () => { gSel = new Set(all.checked ? shown.map((g) => g.id) : []); armed = 0; sync(); };
+    rm.onclick = async () => {
+      if (!gSel.size) return;
+      if (!armed || Date.now() - armed > 5000) { armed = Date.now(); sync(); return; }
+      const ids = shown.map((g) => g.id).filter((id) => gSel.has(id));
+      rm.disabled = true;
+      try {
+        groups = await api("groups/delete", { ids });
+        gSel = null;
+        renderGroups();
+        status(ids.length === 1 ? t("{name} removed", { name: ids[0] }) : t("{n} groups removed", { n: ids.length }), "ok");
+        load(); // the gateway's model list, the agents' pickers
+      } catch (e) {
+        armed = 0;
+        sync();
+        status(e.message, "err");
+      }
+    };
+    bar.append(all, n, el("span", "grow"), rm, done);
+    queueMicrotask(sync);
+    return bar;
+  }
+  // pickedRow: a group while picking: its box, logos and name; a click
+  // anywhere on it picks it or lets it go
+  function pickedRow(g) {
+    const row = el("label", "rt-group rt-gpick" + (g.ready ? "" : " off"));
+    row.dataset.id = g.id;
+    const cb = el("input");
+    cb.type = "checkbox";
+    cb.checked = gSel.has(g.id);
+    cb.setAttribute("aria-label", g.name);
+    cb.onchange = () => {
+      cb.checked ? gSel.add(g.id) : gSel.delete(g.id);
+      gList.querySelector(".rt-gsel")?.sync();
+    };
+    const ics = el("span", "ics");
+    ics.append(stackIcon(groupIcons(g)));
+    const main = el("div", "main"), nm = el("div", "nm");
+    nm.append(el("b", "", g.name), el("code", "mdl", "group/" + g.id));
+    if (g.auto) nm.append(el("small", "auto", t("found by magpie")));
+    main.append(nm, el("div", "mem", g.members.map((id) => memberLabel(g, id)).join(g.routing === "order" ? " → " : " · ")));
+    row.append(cb, ics, main);
+    return row;
   }
   // drawFound: the switch for the groups magpie finds on its own — a
   // model two or more providers serve, as auto-<model> — all at once.
@@ -2479,7 +2593,7 @@
     if (!g.ready) tags.append(el("span", "tag bad", t("no member ready")));
     const edit = el("button", "text", t("Edit"));
     edit.onclick = (e) => { e.stopPropagation(); open(); };
-    const open = () => { gEdit = { id: g.id, draft: { name: g.name, members: [...g.members], match: [...(g.match || [])], matched: [...(g.matched || [])], fast: [...(g.fast || [])], off: [...(g.off || [])], routing: g.routing || "", pick: g.pick || "", affinity: g.affinity || "", sink: !!g.sink, firstToken: g.firstToken || 0, classifier: g.classifier || "", effort: g.effort || "", levels: [...(g.levels || [])], rules: (g.rules || []).map((r) => ({ ...r, intent: r.intent || "", agents: [...(r.agents || [])], time: r.time ? { ...r.time, days: [...(r.time.days || [])] } : null })) } }; renderGroups(); };
+    const open = () => { gEdit = { id: g.id, draft: { name: g.name, members: [...g.members], match: [...(g.match || [])], matched: [...(g.matched || [])], fast: [...(g.fast || [])], off: [...(g.off || [])], routing: g.routing || "", pick: g.pick || "", affinity: g.affinity || "", sink: !!g.sink, firstToken: g.firstToken || 0, context: g.context || 0, classifier: g.classifier || "", effort: g.effort || "", levels: [...(g.levels || [])], rules: (g.rules || []).map((r) => ({ ...r, intent: r.intent || "", agents: [...(r.agents || [])], time: r.time ? { ...r.time, days: [...(r.time.days || [])] } : null })) } }; renderGroups(); };
     row.onclick = open;
     row.oncontextmenu = (e) => { e.preventDefault(); groupMenu(ics, g); };
     row.append(ics, main, tags, edit);
@@ -2833,6 +2947,42 @@
     fw.append(segs(FIRST_OPTS.map(([n, l]) => [n, t(l)]), d.firstToken || 0, (v) => { d.firstToken = +v; drawFirst(); }), fHint);
     ed.append(el("label", "", t("Slow to start")), fw);
     drawFirst();
+    // the window agents are told: the largest member's, the smallest's, or
+    // one the user names (Mikan on Discord)
+    const ctxHint = el("div", "hint"), ctxW = el("div", "ctx-wrap");
+    const ctxIn = keys(input(d.context > 0 ? ctxShort(d.context).toLowerCase() : "", t("e.g. 200k")));
+    ctxIn.classList.add("ctx-in");
+    const ctxs = () => d.members.map((id) => groups.models.find((x) => x.id === id)?.context || infoOf(id)?.context || 0).filter((n) => n > 0);
+    const ctxMode = () => d.context === -1 ? "smallest" : d.context > 0 ? "custom" : "largest";
+    let ctxErr = "";
+    const drawCtx = () => {
+      const ns = ctxs(), mode = ctxMode();
+      ctxIn.hidden = mode !== "custom";
+      const big = ns.length ? Math.max(...ns) : 0, small = ns.length ? Math.min(...ns) : 0;
+      ctxHint.textContent = ctxErr || (mode === "custom"
+        ? t("Agents are told the group takes {n} tokens; a longer conversation still goes on to a member with room for it.", { n: (d.context || 0).toLocaleString() })
+        : mode === "smallest"
+          ? (small ? t("Agents are told {n} tokens, its smallest model's, so they compact before any member would turn the conversation away.", { n: small.toLocaleString() }) : t("Agents are told its smallest model's window, so they compact before any member would turn the conversation away."))
+          : (big ? t("Agents are told {n} tokens, its largest model's; a conversation too long for one member goes on to one with room for it.", { n: big.toLocaleString() }) : t("Agents are told its largest model's window; a conversation too long for one member goes on to one with room for it.")));
+    };
+    const CTX_OPTS = [["largest", "Largest model's"], ["smallest", "Smallest model's"], ["custom", "Custom"]];
+    ctxW.append(segs(CTX_OPTS.map(([id, n]) => [id, t(n)]), ctxMode(), (v) => {
+      ctxErr = "";
+      if (v === "largest") d.context = 0;
+      else if (v === "smallest") d.context = -1;
+      else { const ns = ctxs(); d.context = d.context > 0 ? d.context : (ns.length ? Math.min(...ns) : 200000); ctxIn.value = ctxShort(d.context).toLowerCase(); }
+      drawCtx();
+      if (v === "custom") ctxIn.focus();
+    }), ctxIn, ctxHint);
+    ctxIn.oninput = () => {
+      const m = ctxIn.value.trim().toLowerCase().replace(/_/g, "").match(/^(\d+(?:\.\d+)?)\s*([km]?)$/);
+      const n = m ? Math.round(+m[1] * (m[2] === "k" ? 1e3 : m[2] === "m" ? 1e6 : 1)) : 0;
+      ctxErr = n > 0 ? "" : t("{v} is not a length of tokens like 200k or 1m", { v: ctxIn.value.trim() });
+      if (n > 0) d.context = n;
+      drawCtx();
+    };
+    ed.append(el("label", "", t("Context")), ctxW);
+    drawCtx();
     const aHint = el("div", "hint", t(AFF_HINT[d.affinity] || AFF_HINT[""]));
     const aw = el("div");
     aw.append(segs(AFF_OPTS.map(([id, n]) => [id, t(n)]), d.affinity, (v) => { d.affinity = v; aHint.textContent = t(AFF_HINT[v] || AFF_HINT[""]); }), aHint);
@@ -2845,6 +2995,7 @@
     rAdd.append(svg(PLUS, 11, 1.8), el("span", "", t("Add a rule")));
     const rHint2 = el("div", "hint");
     const drawRules = () => {
+      drawCtx(); // the members' windows changed with them
       rlist.replaceChildren();
       rAdd.hidden = d.members.length < 2;
       rHint2.textContent = t(d.members.length < 2 ? "With two models or more, a rule can send some turns to one of them first."
@@ -3107,7 +3258,7 @@
       if (own && !d.levels.length) return status(t("Pick a level to offer, or leave them to its models"), "warn");
       saveBtn.classList.add("busy");
       // refused, Add can be pressed again (busy, it takes no clicks)
-      groupAction("save", { id: idOf(), from: g?.id, name: d.name.trim() || idOf(), members: namedOf(d), match: d.match, routing: d.routing, pick: d.pick || "", affinity: d.affinity, sink: !!d.sink && sinkable(d.routing), firstToken: d.firstToken || 0, rules: d.rules, effort: d.effort, classifier: d.rules.some((r) => r.intent) || d.effort === "auto" ? d.classifier : "", context: g?.context || 0, levels: own ? d.levels : [], family: g?.family || "", fast: d.fast.filter((x) => d.members.includes(x)), off: d.off.filter((x) => d.members.includes(x)) }, t(g ? "{name} saved" : "{name} added", { name: d.name.trim() || idOf() }))
+      groupAction("save", { id: idOf(), from: g?.id, name: d.name.trim() || idOf(), members: namedOf(d), match: d.match, routing: d.routing, pick: d.pick || "", affinity: d.affinity, sink: !!d.sink && sinkable(d.routing), firstToken: d.firstToken || 0, rules: d.rules, effort: d.effort, classifier: d.rules.some((r) => r.intent) || d.effort === "auto" ? d.classifier : "", context: d.context || 0, levels: own ? d.levels : [], family: g?.family || "", fast: d.fast.filter((x) => d.members.includes(x)), off: d.off.filter((x) => d.members.includes(x)) }, t(g ? "{name} saved" : "{name} added", { name: d.name.trim() || idOf() }))
         .then(() => saveBtn.classList.remove("busy"));
     };
     // what goes wrong is said where it is seen, never a click that does nothing

@@ -143,12 +143,13 @@ func newCycle(a, b QuotaPoint) bool {
 	return moved > b.At.Sub(a.At)+quotaHistSlack || moved < -quotaHistSlack
 }
 
-// pointOf is what w says at now, if it is something to draw.
-func pointOf(w QuotaWindow, now time.Time) (QuotaPoint, bool) {
+// pointOf is what w, read at at, says, if it is something to draw; a
+// reset told in seconds counts from now, when the windows were made.
+func pointOf(w QuotaWindow, at, now time.Time) (QuotaPoint, bool) {
 	if w.Unlimited || w.Aside || w.Family != "" || w.Name == "" || math.IsNaN(w.Used) {
 		return QuotaPoint{}, false
 	}
-	p := QuotaPoint{At: now.UTC().Truncate(time.Second), Left: math.Round(max(0, min(100, 100-w.Used))*100) / 100}
+	p := QuotaPoint{At: at.UTC().Truncate(time.Second), Left: math.Round(max(0, min(100, 100-w.Used))*100) / 100}
 	reset := w.ResetsAt
 	if reset == nil && w.ResetSecs > 0 {
 		r := now.Add(time.Duration(w.ResetSecs) * time.Second)
@@ -212,7 +213,10 @@ func (h quotaHist) prune(now time.Time) {
 
 func quotaHistKey(provider, user string) string { return provider + "|" + strings.ToLower(user) }
 
-// noteQuotaHistory keeps what each window among qs says, read at now.
+// noteQuotaHistory keeps what each window among qs says, at when it was
+// read (ReadAt), or now: a reading handed back again from a cache (a
+// Claude account's, kept until Claude Code tells it again) keeps its time
+// and so isn't taken for a new one.
 func noteQuotaHistory(qs []SubscriptionQuota, now time.Time) {
 	quotaHistMu.Lock()
 	defer quotaHistMu.Unlock()
@@ -222,8 +226,12 @@ func noteQuotaHistory(qs []SubscriptionQuota, now time.Time) {
 		if q.Error != "" || q.AsOf != nil || q.Provider == "" {
 			continue // a reading kept from before isn't a new one
 		}
+		at := now
+		if q.ReadAt != nil && !q.ReadAt.After(now) {
+			at = *q.ReadAt
+		}
 		for _, w := range q.Windows {
-			p, ok := pointOf(w, now)
+			p, ok := pointOf(w, at, now)
 			if !ok {
 				continue
 			}

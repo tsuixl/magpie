@@ -339,6 +339,10 @@ var presets = []PresetDef{
 
 	{ID: "openrouter", Name: "OpenRouter", Icon: "openrouter", Kind: KindRelay, Catalog: "openrouter",
 		Chat: "https://openrouter.ai/api/v1", Anthropic: "https://openrouter.ai/api",
+		// its decision models (liquid/d1, cloudflare/clef, Jev …), listed
+		// apart from its chat models, answer System One at /systemone, so
+		// a routing group can be classified by one with the same key
+		Decide:  "https://openrouter.ai/api/v1",
 		Website: "https://openrouter.ai", KeysURL: "https://openrouter.ai/keys",
 		// app attribution, for OpenRouter's rankings and analytics
 		HeaderHints: []string{"HTTP-Referer", "X-OpenRouter-Title"}},
@@ -366,8 +370,8 @@ var presets = []PresetDef{
 		// docs' model table says (packages/web/src/content/docs/zen.mdx),
 		// so it routes groups like TypeSafe's own (#609's mixed provider)
 		Decide: "https://opencode.ai/zen/v1",
-		// its free models (-free) are served to OpenCode alone, which
-		// magpie asks them as (OpenCodeFree)
+		// its free models (-free, big-pickle) are served to OpenCode
+		// alone, which magpie asks them as (OpenCodeFree)
 		Website: "https://opencode.ai/docs/zen", KeysURL: "https://opencode.ai/auth"},
 	// Kilo Code's gateway, at the OpenRouter-style API its own clients use
 	// (kilo.go): its free models (isFree, ":free") are served with no key,

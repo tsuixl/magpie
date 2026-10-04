@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/provider"
 	"gopkg.in/yaml.v3"
 )
 
@@ -40,11 +41,15 @@ func SyncCatalog() {
 	syncing.running = true
 	syncing.Unlock()
 	for {
+		// the catalog built once for every agent's lists, not for each
+		// look-up of each (thousands at magpie's start, with 30 providers)
+		release := provider.Hold()
 		for _, a := range All() {
 			if a.Sync != nil {
 				_ = a.Sync()
 			}
 		}
+		release()
 		syncing.Lock()
 		if !syncing.again {
 			syncing.running = false

@@ -359,6 +359,30 @@ func TestZCodeKeepsRemoteAddress(t *testing.T) {
 		t.Fatalf("connecting in magpie kept the NAS address: config %s %s, rules %s %s", b, k, rb, rk)
 	}
 
+	// ZCode's own settings change one file only (Discord, 悠悠哥: the NAS
+	// address kept going back to this machine's magpie): a sync carries the
+	// NAS address to the other one rather than taking it back
+	only := func(file, base, key string) {
+		t.Helper()
+		was, wasKey, _, _ := addr()
+		b, _ := os.ReadFile(file)
+		s := strings.ReplaceAll(string(b), was, base)
+		s = strings.ReplaceAll(s, `"apiKey": "`+wasKey+`"`, `"apiKey": "`+key+`"`)
+		os.WriteFile(file, []byte(strings.ReplaceAll(s, `"apiKey":"`+wasKey+`"`, `"apiKey":"`+key+`"`)), 0o644)
+	}
+	for _, file := range []string{rules, path} {
+		if err := a.Fields[0].Set(magpieID); err != nil {
+			t.Fatal(err)
+		}
+		only(file, "http://10.0.0.8:3425", "nas-key")
+		if err := a.Sync(); err != nil {
+			t.Fatal(err)
+		}
+		if b, k, rb, rk := addr(); b != "http://10.0.0.8:3425" || k != "nas-key" || rb != b || rk != k {
+			t.Fatalf("a NAS address in %s alone was taken back: config %s %s, rules %s %s", filepath.Base(file), b, k, rb, rk)
+		}
+	}
+
 	for base, want := range map[string]bool{"http://192.168.1.20:3425": true, "https://nas.lan": true, "http://127.0.0.1:3425": false,
 		"http://localhost:3425": false, "http://[::1]:3425": false, "http://0.0.0.0:3425": false, "": false, "nas:3425": false} {
 		if onAnotherMachine(base) != want {

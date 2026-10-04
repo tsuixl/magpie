@@ -38,6 +38,8 @@ func (c *studentCopilot) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"data":[
 		  {"id":"gpt-5-mini","name":"GPT-5 mini","model_picker_enabled":true,"policy":{"state":"disabled"},"supported_endpoints":["/responses"],"capabilities":{"type":"chat"}},
 		  {"id":"claude-sonnet-5","name":"Claude Sonnet 5","model_picker_category":"versatile","policy":{"state":"disabled"},"supported_endpoints":["/chat/completions","/v1/messages"],"capabilities":{"type":"chat"}}]}`)
+	case r.URL.Path == "/auto":
+		w.WriteHeader(404) // Auto v2 not offered: /models/session
 	case r.URL.Path == "/models/session" && r.Method == "POST":
 		c.sessions++
 		c.hints = string(b)

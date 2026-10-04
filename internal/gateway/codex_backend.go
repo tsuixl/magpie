@@ -107,7 +107,7 @@ func (s *Server) codexBackend(w http.ResponseWriter, r *http.Request) {
 			s.serve(w, r, provider.Responses, body)
 			return
 		}
-		body = callItemIDs(body)
+		body = boundCallIDs(callItemIDs(body))
 		if rest == "/responses/compact" {
 			break // preserve native compaction's existing passthrough
 		}
@@ -927,6 +927,55 @@ func callItemIDs(body []byte) []byte {
 		it["id"], _ = json.Marshal(id)
 		if b, err := marshalPlain(it); err == nil {
 			items[i], changed = b, true
+		}
+	}
+	if !changed {
+		return body
+	}
+	q["input"], _ = marshalPlain(items)
+	nb, err := marshalPlain(q)
+	if err != nil {
+		return body
+	}
+	return nb
+}
+
+// longCallID finds a call_id longer than the ChatGPT backend takes.
+var longCallID = regexp.MustCompile(`"call_id"\s*:\s*"[^"]{65,}"`)
+
+// boundCallIDs is a Responses request with every call_id longer than 64
+// characters as provider.BoundCallID has it, the rest of the request byte
+// for byte (#732, congee949): a conversation that had a foreign provider's
+// tool calls (two ids joined, 86 or 87 characters) went on Codex's own
+// ChatGPT sign-in as it came, and the backend turned it away with 400
+// "input[7].call_id … maximum length 64". A call and its output get the
+// same id, on every request.
+func boundCallIDs(body []byte) []byte {
+	if !longCallID.Match(body) {
+		return body
+	}
+	var q map[string]json.RawMessage
+	if json.Unmarshal(body, &q) != nil {
+		return body
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(q["input"], &items) != nil {
+		return body
+	}
+	changed := false
+	for i, raw := range items {
+		var it map[string]json.RawMessage
+		var id string
+		if json.Unmarshal(raw, &it) != nil || json.Unmarshal(it["call_id"], &id) != nil {
+			continue
+		}
+		b := provider.BoundCallID(id)
+		if b == id {
+			continue
+		}
+		it["call_id"], _ = json.Marshal(b)
+		if nb, err := marshalPlain(it); err == nil {
+			items[i], changed = nb, true
 		}
 	}
 	if !changed {

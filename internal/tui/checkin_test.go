@@ -40,6 +40,19 @@ func stubTrae(t *testing.T, rs []provider.WorkBuddyCheckin) *int {
 	return &calls
 }
 
+func stubMiniMax(t *testing.T, rs []provider.WorkBuddyCheckin) *int {
+	t.Helper()
+	oldHere, oldHas := checkinMM, hasMiniMax
+	t.Cleanup(func() { checkinMM, hasMiniMax = oldHere, oldHas })
+	calls := 0
+	hasMiniMax = func() bool { return rs != nil }
+	checkinMM = func(context.Context) []provider.WorkBuddyCheckin {
+		calls++
+		return rs
+	}
+	return &calls
+}
+
 // c on the Usage page presses WorkBuddy's daily check-in (签到) for every
 // WorkBuddy (China) account signed in here at once, as the app's "Check in now" and magpie accounts
 // checkin do, and says how each stands: the credits and streak, in already,
@@ -51,7 +64,7 @@ func TestTUIChecksWorkBuddyIn(t *testing.T) {
 	// nothing signed in: said so, nothing asked
 	calls := stubCheckin(t, nil)
 	m := press(t, usagePage, "c")
-	wantFlash(t, m, false, "no WorkBuddy (China) or Trae CN account is signed in")
+	wantFlash(t, m, false, "no WorkBuddy (China), Trae CN or MiniMax Code account is signed in")
 	if *calls != 0 {
 		t.Fatal("checked in with no account")
 	}
@@ -97,6 +110,15 @@ func TestTUIChecksTraeIn(t *testing.T) {
 	stubTrae(t, []provider.WorkBuddyCheckin{{User: "hu", By: "trae", Outcome: provider.CheckinIneligible, Msg: "device checked in"}})
 	m = press(t, usagePage, "c")
 	wantFlash(t, m, true, "Trae CN hu isn't eligible for the check-in")
+
+	// and MiniMax Code's (#811)
+	stubTrae(t, nil)
+	mm := stubMiniMax(t, []provider.WorkBuddyCheckin{{User: "hu", By: "minimax", Outcome: provider.CheckinClaimed, Credit: 800, Streak: 2, Asked: true}})
+	m = press(t, usagePage, "c")
+	wantFlash(t, m, true, "MiniMax Code hu checked in today +800 · a 2-day streak")
+	if *mm != 1 {
+		t.Fatalf("minimax asked %d times", *mm)
+	}
 }
 
 // A WorkBuddy (China) account's line on the Usage page says how today's

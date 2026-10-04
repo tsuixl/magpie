@@ -40,6 +40,8 @@ const SHORT = {
 
 // The bare docs paths open the getting-started guide.
 const DOCS = { "/docs": "/docs/start", "/docs/zh": "/docs/zh/start", "/docs/ja": "/docs/ja/start" };
+// the languages the docs are written in besides English
+const DOC_LANGS = ["zh", "ja"];
 
 export default {
   async fetch(req, env, ctx) {
@@ -73,6 +75,22 @@ export default {
     }
     const guide = DOCS[url.pathname.replace(/\/+$/, "")];
     if (guide) return Response.redirect(new URL(guide, url).toString(), 302);
+    // an English docs page, to a browser whose language has its own: as /
+    // does, until a language is picked
+    const doc = url.pathname.match(/^\/docs\/([a-z-]+)(\.html)?$/);
+    if (doc && !DOC_LANGS.includes(doc[1]) && (req.method === "GET" || req.method === "HEAD")) {
+      const lang = preferred(req);
+      const vary = { Vary: "Accept-Language, Cookie", "Cache-Control": "no-cache" };
+      const there = `/docs/${lang}/${doc[1]}`;
+      // a page not written in that language yet stays English
+      if (DOC_LANGS.includes(lang) && (await env.ASSETS.fetch(new Request(new URL(there, url), { method: "HEAD" }))).ok)
+        return new Response(null, { status: 302, headers: { Location: there + url.search, ...vary } });
+      const res = beacon(await env.ASSETS.fetch(req));
+      const out = new Response(res.body, res);
+      out.headers.append("Vary", "Accept-Language, Cookie");
+      out.headers.set("Cache-Control", "no-cache");
+      return out;
+    }
     const home = url.pathname.match(/^\/([a-z]{2})(\/(index\.html)?)?$/);
     if (home && LANGS[home[1]]) {
       if (!home[2]) return Response.redirect(new URL(`/${home[1]}/`, url).toString(), 301);

@@ -95,8 +95,10 @@ type SubscriptionQuota struct {
 	// AsOf is when an allowance shown in place of one that couldn't be
 	// read was read (see keepLast); nil for a reading just made.
 	AsOf *time.Time `json:"asOf,omitempty"`
-	// ReadAt is when a key's balance was read, which the minute it is
-	// kept for (KeyBalances) leaves behind the page's asking.
+	// ReadAt is when what is shown was read: a key's balance, kept a
+	// minute (KeyBalances), or an account's allowance, which a cache (a
+	// minute's, or a Claude account's until Claude Code tells it again)
+	// can hand back long after; nil when not known.
 	ReadAt *time.Time `json:"readAt,omitempty"`
 	// Resets are the rate-limit resets a Codex account holds, nil when it
 	// holds none (codex_resets.go).
@@ -363,7 +365,7 @@ func fetchSubscriptionUsage() []SubscriptionQuota {
 	var wg sync.WaitGroup
 	for i, f := range fetches {
 		wg.Add(1)
-		go func() { defer wg.Done(); out[i] = keepLast(f(), "") }()
+		go func() { defer wg.Done(); out[i] = keepLast(readNow(f()), "") }()
 	}
 	wg.Wait()
 	return out
@@ -444,8 +446,33 @@ func claudeSubscriptionUsage(ctx context.Context) SubscriptionQuota {
 	q.Windows, err = claudeWindows(ctx, user, true)
 	if err != nil {
 		q.Error = err.Error()
+	} else {
+		q.ReadAt = claudeReadAt(user)
 	}
 	return q
+}
+
+// readNow stamps a reading just made, one that doesn't say when it was
+// read itself, with the time.
+func readNow(q SubscriptionQuota) SubscriptionQuota {
+	if q.Error == "" && q.AsOf == nil && q.ReadAt == nil && (len(q.Windows) > 0 || q.Balance != "") {
+		now := time.Now()
+		q.ReadAt = &now
+	}
+	return q
+}
+
+// claudeReadAt is when what is kept of user's Claude allowance was told:
+// by /usage or as Claude Code answered. Nil when nothing is.
+func claudeReadAt(user string) *time.Time {
+	claudeUsage.Lock()
+	e, ok := claudeUsage.m[strings.ToLower(user)]
+	claudeUsage.Unlock()
+	if !ok || e.at.IsZero() {
+		return nil
+	}
+	at := e.at
+	return &at
 }
 
 // claudeUsage keeps each Claude account's allowance as Claude Code last

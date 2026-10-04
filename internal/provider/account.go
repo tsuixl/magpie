@@ -124,7 +124,8 @@ func (p Provider) ListedAPIs(model string) []Protocol {
 	if p.IsPlugin() {
 		return p.pluginAPIs(model)
 	}
-	ms, _, _ := catalog.Live(p.ID)
+	// asked for every model of every agent: read once while a request holds
+	ms := heldOf("live:"+p.ID, func() []catalog.Model { ms, _, _ := catalog.Live(p.ID); return ms })
 	for _, m := range ms {
 		if m.ID == model && len(m.APIs) > 0 {
 			out := make([]Protocol, len(m.APIs))
@@ -1234,6 +1235,10 @@ func copilotAccept(ctx context.Context, app copilotApp, s copilotSession, model 
 }
 
 // copilotModels asks Copilot which chat models this account may use.
+// copilotBaseModel is Copilot's base model, billed to no allowance on any
+// plan.
+const copilotBaseModel = "gpt-4.1"
+
 func copilotModels(ctx context.Context, app copilotApp) ([]catalog.Model, error) {
 	s, err := app.session(ctx)
 	if err != nil {
@@ -1305,18 +1310,23 @@ func copilotModels(ctx context.Context, app copilotApp) ([]catalog.Model, error)
 		case m.Policy != nil && m.Policy.State == "enabled", m.Policy == nil && m.Picker:
 			picks = append(picks, m.ID)
 			// Copilot's base model (VS Code's copilot-base: the list's
-			// is_chat_fallback), then its default, then one billed to no
-			// premium allowance: what a plan that may pick little (a
-			// Student's) is likeliest to be served
+			// is_chat_fallback), then its default, then gpt-4.1, which
+			// the list no longer flags as either but is the one a
+			// Student plan is served picked by hand (#256: it was last
+			// of seven picks, the six before it refused), then one billed
+			// to no premium allowance: what a plan that may pick little
+			// is likeliest to be served
 			switch {
 			case m.Fallback:
 				rank[m.ID] = 0
 			case m.Default:
 				rank[m.ID] = 1
-			case m.Billing != nil && !m.Billing.Premium:
+			case m.ID == copilotBaseModel:
 				rank[m.ID] = 2
-			default:
+			case m.Billing != nil && !m.Billing.Premium:
 				rank[m.ID] = 3
+			default:
+				rank[m.ID] = 4
 			}
 		case m.Policy != nil && m.Policy.Terms != "":
 			waiting[m.ID] = true

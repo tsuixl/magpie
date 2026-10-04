@@ -39,6 +39,8 @@ func TestCopilotAutoThroughGateway(t *testing.T) {
 		case "/models":
 			io.WriteString(w, `{"data":[
 			  {"id":"gpt-5-mini","name":"GPT-5 mini","model_picker_enabled":true,"policy":{"state":"disabled"},"supported_endpoints":["/responses"],"capabilities":{"type":"chat"}}]}`)
+		case "/auto":
+			w.WriteHeader(404) // Auto v2 not offered: /models/session
 		case "/models/session":
 			sessions++
 			io.WriteString(w, `{"session_token":"auto-tok","selected_model":"gpt-5-mini","available_models":["gpt-5-mini"],"expires_at":`+

@@ -63,6 +63,8 @@ func (c *student371) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// terms accepted, as they are for any account: the model is no
 		// more served for it
 		io.WriteString(w, `{"state":"enabled"}`)
+	case "/auto":
+		w.WriteHeader(404) // Auto v2 not offered: /models/session
 	case "/models/session":
 		if !c.auto {
 			w.WriteHeader(404)

@@ -141,7 +141,8 @@ const claudeContextEnv = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
 // of it and the model's window, a [1m] one's too. magpie sets it to
 // settings.WorkingWindow, so a 1M model isn't run to 1M with every turn
 // sending all of it (X: Chen, turns of ~550K tokens waiting 70–90s for a
-// first token); settings.FullContext leaves it out.
+// first token); settings.FullContext leaves it out, and so does a Claude
+// model, which Anthropic runs to its whole window.
 const claudeCompactEnv = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
 
 // claudeCapsEnv tells Claude Code what a model it doesn't know can do, as
@@ -412,13 +413,16 @@ func claudeIn(at place) *Agent {
 		return nil
 	}
 	// writeCompact has Claude Code compact at the working window
-	// (settings.WorkingWindow) on magpie, unless settings.FullContext
+	// (settings.WorkingWindow) on magpie, unless settings.FullContext or the
+	// main model is one of Anthropic's Claude models: Anthropic runs a [1m]
+	// one to its whole 1M, so it gets its own window (Max on Discord: a
+	// [1m] model stopped at 272K)
 	writeCompact := func() error {
 		if env(claudeCompactEnv) != "" && !compactOurs() {
 			forget(compactKey)
 			return nil
 		}
-		if settings.Load().FullContext {
+		if settings.Load().FullContext || claudeModel(mainModel()) {
 			return dropCompact()
 		}
 		w := strconv.Itoa(settings.WorkingWindow)
@@ -559,24 +563,22 @@ func claudeIn(at place) *Agent {
 	var writeTiers func(main string, tiers map[string]string) error
 	set := func(v string) error {
 		if v == "" {
-			// Claude Code as installed: Anthropic's own endpoint and model
+			// Claude Code's own model, on the endpoint the user had before
+			// magpie: magpie steps out, putting back their endpoint and
+			// token, which stay theirs (__jingling on X: magpie claude
+			// model default took their ANTHROPIC_BASE_URL and token away
+			// for good)
+			if _, err := unroute(); err != nil {
+				return err
+			}
 			keys := []string{"model"}
-			for _, k := range claudeEnv {
-				keys = append(keys, "env."+k)
+			if env("ANTHROPIC_AUTH_TOKEN") == gateway.Token {
+				// magpie's, left at a gateway address since changed
+				for _, k := range claudeEnv {
+					keys = append(keys, "env."+k)
+				}
 			}
 			forget(at.key("claude.model"), at.key("claude.base_url"), at.key("claude.auth_token"), mainKey)
-			if err := dropWindow(); err != nil {
-				return err
-			}
-			if err := dropCompact(); err != nil {
-				return err
-			}
-			if err := dropCaps(); err != nil {
-				return err
-			}
-			if err := dropPicker(); err != nil {
-				return err
-			}
 			return edit.DelJSON(path, keys...)
 		}
 		if isMagpie(v) {
@@ -1269,6 +1271,15 @@ func claude1MFor(agent string) func(ref string) string {
 		}
 		return ref
 	}
+}
+
+// claudeModel says a model ref (magpie/v/claude-opus-5-5[1m], or Claude
+// Code's own claude-opus-5-5) is one of Anthropic's Claude models, by
+// whichever provider it comes.
+func claudeModel(ref string) bool {
+	m := strings.TrimSuffix(ref, "[1m]")
+	m = m[strings.LastIndex(m, "/")+1:]
+	return strings.HasPrefix(strings.ToLower(m), "claude")
 }
 
 // claudeWindow is the context window to tell Claude Code for the models it

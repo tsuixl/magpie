@@ -487,3 +487,5 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 .lib-pickn.none { font-weight: 400; color: var(--faint); white-space: normal; }
 .lib-pickbar .lib-updall { height: 24px; padding: 0 9px; font-size: 12px; flex: none; }
 .lib-subhead > .lib-agents { margin-left: auto; }
+.lib-pickbar .lib-groupname { flex: 1 1 140px; min-width: 100px; max-width: 240px; margin: 0; }
+.lib-grouphead .lib-grouprename-in { height: 24px; margin: 0; max-width: 260px; font-weight: 500; }

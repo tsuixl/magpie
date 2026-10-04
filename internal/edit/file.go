@@ -13,16 +13,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/steady"
 )
 
 // Read returns the file contents, or (nil, nil) when the file does not exist.
+// A file unchanged since it was last read is not read again (the Agents
+// page looks at each agent's files many times over), and what is returned
+// is the caller's own to change.
 func Read(path string) ([]byte, error) {
-	b, err := os.ReadFile(path)
+	b, err := filememo.Read("bytes", path, func(b []byte) ([]byte, error) { return b, nil })
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
-	return b, err
+	if err != nil {
+		return nil, err
+	}
+	return bytes.Clone(b), nil
 }
 
 // WriteAtomic writes data to path via a temp file + rename so a crash can
@@ -32,6 +39,7 @@ func Read(path string) ([]byte, error) {
 // written in place, see writeInPlace. Once written, temp files earlier
 // writes of path left behind go, see removeStaleTemps.
 func WriteAtomic(path string, data []byte) error {
+	defer filememo.Forget() // read again, where a request holds it
 	path, err := Target(path)
 	if err != nil {
 		return err

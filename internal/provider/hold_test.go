@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/yetone/magpie/internal/settings"
 )
 
 // A request that only reads builds the catalog once for all its look-ups
@@ -37,6 +39,31 @@ func TestHoldBuildsOnce(t *testing.T) {
 	}
 	if held.holds != 0 {
 		t.Fatalf("holds left: %d", held.holds)
+	}
+}
+
+// The settings are read once while a request holds the catalog (a look at
+// the agents read settings.json for every model of every agent), and a
+// setting saved meanwhile is seen at once.
+func TestHoldReadsSettingsOnce(t *testing.T) {
+	defer Hold()()
+	if _, ok := VisibleTo("held-agent"); ok {
+		t.Fatal("a visibility before any was set")
+	}
+	// written by something else: the held read stands
+	path := settings.Path()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(`{"visible":{"held-agent":["a"]}}`), 0o600)
+	if _, ok := VisibleTo("held-agent"); ok {
+		t.Fatal("settings.json read again while held")
+	}
+	s := settings.Load()
+	s.Visible = map[string][]string{"held-agent": {"b"}}
+	if err := settings.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	if names, ok := VisibleTo("held-agent"); !ok || len(names) != 1 || names[0] != "b" {
+		t.Fatalf("a setting saved while held: %v %v", names, ok)
 	}
 }
 
@@ -143,5 +170,27 @@ func TestCursorKeychainReadOnce(t *testing.T) {
 	}
 	if tok := cursorKeychainToken(false); tok != "tok-3" || runs() != 3 {
 		t.Fatalf("after a fresh read: %q, %d runs", tok, runs())
+	}
+}
+
+// migrations.json is read once while a request holds the catalog (the
+// GUI's state looked at it thousands of times, one per provider's API),
+// and a move written meanwhile, even one read from the file as it was
+// before, is seen at once.
+func TestHoldReadsMigrationsOnce(t *testing.T) {
+	defer Hold()()
+	if Moved("held-sub") {
+		t.Fatal("moved before any move")
+	}
+	os.MkdirAll(filepath.Dir(migrationsPath()), 0o755)
+	os.WriteFile(migrationsPath(), []byte(`{"other-sub":{"state":"plugin"}}`), 0o600)
+	if Moved("other-sub") {
+		t.Fatal("migrations.json read again while held")
+	}
+	if err := setMigration("held-sub", func(m *Migration) { m.State = MovePlugin }); err != nil {
+		t.Fatal(err)
+	}
+	if !Moved("held-sub") || !Moved("other-sub") {
+		t.Fatalf("a move written while held: %v %v", Moved("held-sub"), Moved("other-sub"))
 	}
 }

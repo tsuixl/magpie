@@ -291,7 +291,11 @@ func migrationsPath() string { return filepath.Join(filepath.Dir(Path()), "migra
 
 var migrationsMu sync.Mutex
 
-func readMigrations() map[string]Migration {
+// readMigrations is held while a request reads: the GUI's state asks each
+// provider's move several times over, thousands of looks at the file.
+func readMigrations() map[string]Migration { return heldOf("migrations", readMigrationsFile) }
+
+func readMigrationsFile() map[string]Migration {
 	m, _ := filememo.Read("migrations", migrationsPath(), func(b []byte) (map[string]Migration, error) {
 		var m map[string]Migration
 		_ = json.Unmarshal(b, &m)
@@ -344,7 +348,7 @@ func setMigration(id string, f func(m *Migration)) error {
 	migrationsMu.Lock()
 	defer migrationsMu.Unlock()
 	all := map[string]Migration{}
-	for k, v := range readMigrations() {
+	for k, v := range readMigrationsFile() {
 		all[k] = v
 	}
 	m := all[id]

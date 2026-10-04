@@ -61,7 +61,7 @@ func asideIn(at place) *Agent {
 		return nil
 	}
 	a := &Agent{
-		ID: "aside", Name: "Aside", Icon: "aside", Bin: "aside", Path: path,
+		ID: "aside", Name: "Aside", Icon: "aside", Bin: "aside", Path: path, Spelled: prefixed,
 		// ~/.aside, the folder the installer makes, and not the account's:
 		// ~/.aside/u/0 only appears once someone has signed in, so an Aside
 		// that is installed and not yet used is not detected by it, and the
@@ -428,6 +428,12 @@ func asideRoleSelection(path, role, p, m string) map[string]any {
 // Aside reads at its next start, and the user is told to start it. set is the
 // change and del is taking it back, one of which is nil.
 func asideApply(path, expr string, set []edit.KV, del []string) error {
+	if disconnectDryRun {
+		if del != nil {
+			return edit.DelJSON(path, del...)
+		}
+		return edit.SetJSON(path, set...)
+	}
 	expr += "console.log('" + asideOK + "')"
 	if err := asideSet(asideAccountID(), expr); err == nil {
 		asideStale.Store(false)

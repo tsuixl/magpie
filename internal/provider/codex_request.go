@@ -346,6 +346,20 @@ func conversationKey(instructions string, input []any) string {
 	return s[:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
 }
 
+// BoundCallID is a call's id as the ChatGPT backend takes one: as it is
+// when it fits its 64 characters, else the sha256 of it (trimmed, as calls
+// and their outputs are paired), 64 hex characters. Foreign providers can
+// join two ids into one longer than that (#732, congee949: 86 and 87); the
+// same id gives the same hash on every request, so a call and its output
+// stay paired, and two ids that differ are never cut down alike.
+func BoundCallID(id string) string {
+	if len(id) <= 64 {
+		return id
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(id)))
+	return hex.EncodeToString(sum[:])
+}
+
 // codexInput makes input items fit a request that keeps nothing: no
 // references to stored items, no ids, a tool's output without its call
 // kept as a message saying what it was, and no system role, which the
@@ -355,6 +369,13 @@ func codexInput(input []any) []any {
 	for _, item := range input {
 		it, _ := item.(map[string]any)
 		id, _ := it["call_id"].(string)
+		switch it["type"] {
+		case "function_call", "function_call_output", "local_shell_call", "local_shell_call_output", "custom_tool_call", "custom_tool_call_output", "tool_search_call", "tool_search_output":
+			if b := BoundCallID(id); b != id {
+				id = b
+				it["call_id"] = id
+			}
+		}
 		switch it["type"] {
 		case "function_call":
 			calls[strings.TrimSpace(id)] = "function_call_output"

@@ -26,10 +26,10 @@ function serve(lang, feed, fixture = initial) {
     if (url.pathname === "/wails/runtime.js") return route.fulfill({ contentType: "text/javascript", body: "export const Window = {};" });
     if (url.pathname === "/api/state") return json({ agents: [{ id: "codex", name: "Codex", fields: [] }, { id: "claude", name: "Claude Code", fields: [] }], profiles: [], settings: { lang, theme: "dark" } });
     if (url.pathname === "/api/gateway/trace") {
-      const routes = url.searchParams.has("wait") ? await new Promise((resolve) => { feed.next = (value) => { feed.next = null; resolve(value); }; }) : fixture;
+      const routes = url.searchParams.has("wait") ? await new Promise((resolve) => { feed.next = (value) => { feed.next = null; resolve(value); }; }) : feed.routes || fixture;
       return json({ mine: true, now: now.toISOString(), seq: routes.at(-1)?.seq || 1, totals: { requests: 6, rerouted: 0, errors: 0 }, routes });
     }
-    if (url.pathname === "/api/gateway/history") return json({ cut: false, days: [{ day, requests: fixture.length }], routes: url.searchParams.get("day") ? fixture : [] });
+    if (url.pathname === "/api/gateway/history") return json({ cut: false, days: [{ day, requests: fixture.length }], routes: url.searchParams.get("day") ? feed.routes || fixture : [] });
     if (url.pathname === "/api/gateway/route" && feed.route) return json(feed.route);
     if (url.pathname === "/api/gateway/session-titles") {
       const input = route.request().postDataJSON();
@@ -335,6 +335,20 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       assert.match(await parent.locator(".summary").textContent(), lang === "zh" ? /2 个请求/ : /2 requests/);
       assert.equal(await page.locator(".rt-req .kind").filter({ hasText: lang === "zh" ? "标题" : "title" }).count(), 1);
       await shot("after");
+      feed.routes = data.after || fixture.map((r) => ({ ...r,
+        parentSession: data.afterRefresh.parents[r.id] || "", parentMatched: !!data.afterRefresh.matched[r.id],
+        sessionTitle: data.afterRefresh.names[data.afterRefresh.parents[r.id] || r.session] || "" }));
+      // Reload the day from history, then reload the page. Both fetch native
+      // records again; the persisted evidence must restore the same grouping.
+      await page.locator(".rt-day").filter({ hasText: lang === "zh" ? "今天" : "today" }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".rt-session").length === 2);
+      assert.equal(await group(title.session).count(), 0, "history navigation lost title association");
+      feed.next?.([]);
+      await page.reload();
+      await page.waitForFunction(() => document.querySelectorAll(".rt-session").length === 2);
+      assert.equal(await group(title.session).count(), 0, "page reload lost title association");
+      assert.match(await parent.locator(".summary").textContent(), lang === "zh" ? /2 个请求/ : /2 requests/);
+      await shot("after-navigation");
       await parent.click();
       assert.equal(await page.locator(".rt-req").count(), 1, "original request and title helper fold together");
       const handle = await parent.elementHandle();

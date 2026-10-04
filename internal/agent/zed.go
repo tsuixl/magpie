@@ -38,7 +38,7 @@ func zedAt(dir string) *Agent {
 	model := pairGet(func(k string) (string, bool) { return edit.GetJSON(path, k) }, zedModel+".provider", zedModel+".model")
 	key := "zed:" + path + ":"
 	return atomic(&Agent{
-		ID: "zed", Name: "Zed", Icon: "zed", Bin: "zed", Dir: dir, Path: path,
+		ID: "zed", Name: "Zed", Icon: "zed", Bin: "zed", Dir: dir, Path: path, Spelled: prefixed,
 		UA: []string{"zed"},
 		Notice: func() string {
 			if usesMagpie(model()) && Running(`(^|/)(zed|zeditor|zed-editor)( |$)`) {

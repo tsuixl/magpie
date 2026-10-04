@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -413,6 +414,7 @@ type tomlFile struct {
 func parseTOMLFile(lines []string) (tomlFile, error) {
 	p := unstable.Parser{KeepComments: true}
 	p.Reset([]byte(strings.Join(lines, "\n")))
+	shapeOf := tomlShaper(lines)
 	root := tomlTableSpan{to: len(lines)}
 	var tables []tomlTableSpan
 	current := func() *tomlTableSpan {
@@ -470,7 +472,7 @@ func parseTOMLFile(lines []string) (tomlFile, error) {
 				keyRange.Length = key.Raw.Offset + key.Raw.Length - keyRange.Offset
 			}
 		}
-		shape := p.Shape(keyRange)
+		shape := shapeOf(keyRange)
 		i := shape.Start.Line - 1
 		if err := finishKey(i); err != nil {
 			return tomlFile{}, err
@@ -496,7 +498,7 @@ func parseTOMLFile(lines []string) (tomlFile, error) {
 				value: string(value.Data), scalar: value.Kind != unstable.Array && value.Kind != unstable.InlineTable,
 			}
 			if comment := expr.Next(); comment != nil && comment.Kind == unstable.Comment {
-				kv.comment = p.Shape(comment.Raw).Start.Column - 1
+				kv.comment = shapeOf(comment.Raw).Start.Column - 1
 			}
 			table.keys = append(table.keys, kv)
 		}
@@ -508,6 +510,25 @@ func parseTOMLFile(lines []string) (tomlFile, error) {
 		return tomlFile{}, err
 	}
 	return tomlFile{root: root, tables: tables}, nil
+}
+
+// tomlShaper is the parser's Shape for the document of lines, found from
+// where each line starts rather than by counting the newlines before each
+// range, as Shape does: that is a pass over the file for each key, which
+// took a third of a second on a 1.5 MB config.toml of Codex's.
+func tomlShaper(lines []string) func(unstable.Range) unstable.Shape {
+	starts := make([]int, len(lines))
+	for i, off := 1, 0; i < len(lines); i++ {
+		off += len(lines[i-1]) + 1
+		starts[i] = off
+	}
+	at := func(off int) unstable.Position {
+		i := sort.Search(len(starts), func(i int) bool { return starts[i] > off }) - 1
+		return unstable.Position{Offset: off, Line: i + 1, Column: off - starts[i] + 1}
+	}
+	return func(r unstable.Range) unstable.Shape {
+		return unstable.Shape{Start: at(int(r.Offset)), End: at(int(r.Offset + r.Length))}
+	}
 }
 
 func tomlParseError(p *unstable.Parser, err error) error {
@@ -535,7 +556,8 @@ func tomlParseError(p *unstable.Parser, err error) error {
 // also checks duplicate keys and conflicting definitions; it never rewrites
 // the document, so comments and formatting survive validation unchanged.
 func writeTOML(path string, lines []string) error {
-	data := []byte(joinLines(lines))
+	orig, _ := Read(path)
+	data := []byte(joinLinesLike(lines, string(orig)))
 	if err := validateTOML(data); err != nil {
 		return fmt.Errorf("%s: edited TOML is invalid: %w", path, err)
 	}

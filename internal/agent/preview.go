@@ -39,9 +39,14 @@ const (
 // magpie that asked for the preview has on.
 var dryProviders map[string]bool
 
+// disconnectDryRun is confined to the preview subprocess. Its temporary
+// HOME isolates files, but not a running agent reached through its CLI.
+var disconnectDryRun bool
+
 // DryRun disconnects an agent in the process DisconnectPreview starts, on
 // the copy under its temporary home.
 func DryRun(id string) error {
+	disconnectDryRun = true
 	if p := os.Getenv(dryProvidersVar); p != "" {
 		b, err := os.ReadFile(p)
 		if err != nil {

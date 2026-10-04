@@ -87,7 +87,15 @@ func TestApplyGroupPairs(t *testing.T) {
 	if err := applyGroupPairs(&g, []string{"models-=x"}, resolve, false); err != nil || strings.Join(g.Members, " ") != "b/y" {
 		t.Fatalf("drop by bare id: %v %v", err, g.Members)
 	}
-	for _, bad := range [][]string{{"models"}, {"colour=red"}, {"id=x"}, {"models=nope"}, {"routing=fast"}, {"models-=a/m"}} {
+	for _, c := range []struct {
+		v    string
+		want int
+	}{{"272k", 272000}, {"smallest", provider.ContextSmallest}, {"largest", 0}, {"1m", 1000000}, {"", 0}} {
+		if err := applyGroupPairs(&g, []string{"context=" + c.v}, resolve, false); err != nil || g.Context != c.want {
+			t.Errorf("context=%s: %d %v", c.v, g.Context, err)
+		}
+	}
+	for _, bad := range [][]string{{"models"}, {"colour=red"}, {"id=x"}, {"models=nope"}, {"routing=fast"}, {"models-=a/m"}, {"context=lots"}} {
 		h := g
 		if err := applyGroupPairs(&h, bad, resolve, false); err == nil {
 			t.Errorf("%v: no error", bad)

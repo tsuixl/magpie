@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/yetone/magpie/internal/catalog"
 )
 
 // OpenCodeVersion is the OpenCode release magpie says it is to OpenCode's
@@ -42,10 +44,24 @@ func OpenCodeClient(h http.Header, session string) {
 // OpenCodeClient sets, a streamed request offering tools named bash and
 // read (lowercase, by name alone; checked against Zen, October 2026). The
 // gateway asks them so whoever the client is (gateway/zenfree.go), and the
-// Test button's probe so (zenFreeProbe).
+// Test button's probe so (zenFreeProbe). A free model is one whose id ends
+// in -free, or one models.dev's opencode prices at nothing, as big-pickle,
+// whose id doesn't say so (361 on Discord: it answered 403 "OpenCode's
+// free tier can only be used from within OpenCode"); openCodeFreeIDs are
+// such ones known without the catalog.
 func (p Provider) OpenCodeFree(model string) bool {
-	return p.IsOpenCode() && strings.HasSuffix(model, "-free")
+	if !p.IsOpenCode() {
+		return false
+	}
+	if strings.HasSuffix(model, "-free") || openCodeFreeIDs[model] {
+		return true
+	}
+	pr, ok := catalog.PriceOf("opencode", model)
+	return ok && pr.Input == 0 && pr.Output == 0
 }
+
+// openCodeFreeIDs are Zen's free models whose ids don't end in -free.
+var openCodeFreeIDs = map[string]bool{"big-pickle": true, "grok-code": true}
 
 // OpenCodeTools are the tools Zen's free tier wants offered, by name.
 var OpenCodeTools = []string{"bash", "read"}

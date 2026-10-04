@@ -94,6 +94,11 @@ type Price struct {
 	CacheWrite float64 `json:"cache_write"`
 }
 
+// Times is the price at r times each of its parts.
+func (p Price) Times(r float64) Price {
+	return Price{Input: p.Input * r, Output: p.Output * r, CacheRead: p.CacheRead * r, CacheWrite: p.CacheWrite * r}
+}
+
 // Cost of a call at this price. Reasoning tokens are billed as output by
 // every vendor, and are already inside the output count.
 func (p Price) Cost(input, output, cacheRead, cacheWrite int) float64 {

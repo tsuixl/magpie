@@ -91,6 +91,9 @@ func hanako(home string) *Agent {
 		// what its provider client sends, though the key names it first
 		UA:  []string{"hanaagent"},
 		Dir: dir, Path: path,
+		// its own providers' models are provider/id as magpie's are: one
+		// is magpie's only on magpie's provider
+		Spelled: prefixed,
 		Sync: func() error {
 			cur, ok := hanakoCurrent(dir)
 			if !ok || hanakoSame(cur, hanakoProvider()) {

@@ -94,6 +94,9 @@ func firstOf(xs []string) string {
 // magpieModels is the catalog as agent is shown it, as catalog.Models, for
 // agents that keep their own model files.
 func magpieModels(agent string) []catalog.Model {
+	// the providers built once for all the models' prices, not for each:
+	// dsh's round at every start built them for each of hundreds
+	defer provider.Hold()()
 	var out []catalog.Model
 	shown, _ := provider.CatalogFor(agent)
 	labels := provider.Labels(shown)

@@ -432,10 +432,10 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         // the window at its narrowest (MinWidth in app.go)
         await page.setViewportSize({ width: 560, height: 700 });
         await page.waitForTimeout(200);
-        // the table scrolls in its box; the page never sideways
+        // the table scrolls in its box, and its scrollbar in its own; the page never sideways
         const sideways = () => page.evaluate(() => {
           const v = document.querySelector("#view-usage"), w = document.querySelector("#ledWrap");
-          const wide = [...v.querySelectorAll("*")].filter((e) => !w.contains(e) && e.offsetParent && e.getBoundingClientRect().right > v.getBoundingClientRect().right + 1).map((e) => e.id || e.className).slice(0, 8);
+          const wide = [...v.querySelectorAll("*")].filter((e) => !w.contains(e) && e.parentElement?.id !== "ledHScroll" && e.offsetParent && e.getBoundingClientRect().right > v.getBoundingClientRect().right + 1).map((e) => e.id || e.className).slice(0, 8);
           return [document.documentElement.scrollWidth > document.documentElement.clientWidth || v.scrollWidth > v.clientWidth, wide, [w.scrollWidth, w.clientWidth]];
         });
         const [wider, wide, wrap] = await sideways();

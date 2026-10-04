@@ -156,6 +156,7 @@ func writeLogins(ls []savedLogin) error {
 // writePrivate replaces a file readable by the user alone, atomically, so
 // an agent reading it at that moment sees either version, never half.
 func writePrivate(path string, b []byte) error {
+	defer filememo.Forget()        // read again, where a request holds it
 	path, err := edit.Target(path) // a symlink stays, its target written
 	if err != nil {
 		return err

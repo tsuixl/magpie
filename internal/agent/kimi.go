@@ -155,7 +155,7 @@ func kimiIn(at place) *Agent {
 		return err == nil && t != nil
 	}
 	return atomic(&Agent{
-		ID: "kimi", Name: "Kimi Code", Icon: "kimi", Aliases: []string{"kimi-code", "kimi-cli"},
+		ID: "kimi", Name: "Kimi Code", Icon: "kimi", Aliases: []string{"kimi-code", "kimi-cli"}, Spelled: prefixed,
 		UA:  []string{"kimicli"},
 		Bin: "kimi", Dir: dir, Path: path,
 		Sync: func() error {

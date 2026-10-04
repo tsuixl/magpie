@@ -55,6 +55,9 @@ func copilotRefused(ctx context.Context, app copilotApp, model string, status in
 	if model == "" || model == CopilotAuto {
 		return false
 	}
+	if auto {
+		pickRefused(ctx, model, APIError(body, "400"))
+	}
 	copilotRefusedMu.Lock()
 	if copilotRefusedAt[app.Token] == nil {
 		copilotRefusedAt[app.Token] = map[string]time.Time{}

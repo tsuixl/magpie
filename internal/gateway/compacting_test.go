@@ -1,6 +1,9 @@
 package gateway
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -104,5 +107,85 @@ func TestCompactRuleWords(t *testing.T) {
 	}
 	if !r.Matches(provider.RuleRequest{Compact: true}) || r.Matches(provider.RuleRequest{Tokens: 1 << 20}) {
 		t.Fatal("Matches")
+	}
+}
+
+// A compaction a rule sent to a model of its own isn't a turn of the
+// conversation: when it answers, the conversation stays where it was
+// (gateway.go guards answered with !hit.Compact), so when it breaks off
+// mid-reply the stick must be left alone too — unanswered forgot it
+// whatever the request was, and the agent's next turn, after a compaction
+// that failed, was told to go by routing again instead of the account that
+// had been answering it (#733's follow-up, noted on #776's merge).
+func TestCompactionBrokeOffKeepsTheStick(t *testing.T) {
+	const broke = "Unable to reach the model provider: We're having trouble connecting to the model provider."
+	fresh(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		who := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		w.Header().Set("Content-Type", "text/event-stream")
+		if who == "broken" && strings.Contains(string(body), "detailed summary") { // the compaction alone breaks off
+			io.WriteString(w, sse(`data: {"id":"c1","choices":[{"index":0,"delta":{"role":"assistant","content":"Let me look"}}]}`,
+				`data: {"error":{"message":"`+broke+`"}}`,
+				`data: [DONE]`))
+			return
+		}
+		io.WriteString(w, sse(`data: {"id":"c2","choices":[{"index":0,"delta":{"role":"assistant","content":"from fine"}}]}`,
+			`data: {"id":"c2","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+			`data: {"id":"c2","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":3000,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":2500}}}`,
+			`data: [DONE]`))
+	}))
+	defer up.Close()
+	for _, p := range []provider.Provider{
+		{ID: "flaky", Name: "Flaky", Key: "broken", Chat: up.URL + "/v1", Models: []string{"m"}},
+		{ID: "steady", Name: "Steady", Key: "fine", Chat: up.URL + "/v1", Models: []string{"m"}},
+	} {
+		if err := provider.Save(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := provider.SaveGroup(provider.Group{Name: "G", Members: []string{"flaky/m", "steady/m"}, Routing: provider.Ordered,
+		Rules: []provider.Rule{{Use: "flaky/m", Compact: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	s := New()
+	post := func(body string) string {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("x-session-id", "s1")
+		s.Handler().ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+	ccSystem := `{"role":"system","content":"You are a helpful AI assistant tasked with summarizing conversations."},`
+	compaction := func(first string) string {
+		return `{"model":"group/g","stream":true,"messages":[` + ccSystem + `{"role":"user","content":` + quote(first) + `},{"role":"assistant","content":"done"},` +
+			`{"role":"user","content":"Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests."}]}`
+	}
+	// an ordinary turn: flaky answers it, and the conversation stays there
+	post(`{"model":"group/g","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	t.Logf("first turn: %+v", s.trace.routes[len(s.trace.routes)-1])
+	sticks.Lock()
+	var key string
+	var st stick
+	for k, v := range sticks.m { // the one conversation of this test
+		key, st = k, v
+	}
+	sticks.Unlock()
+	if st.who != "flaky#"+provider.KeyID("broken") {
+		t.Fatalf("the first turn's answerer: %+v", st)
+	}
+	// a compaction, which the rule sends to flaky's own model, breaks off:
+	// the agent replays the same conversation, so the request is in the one
+	// the first turn answered in
+	post(compaction("hi"))
+	r := s.trace.routes[len(s.trace.routes)-1]
+	if n := len(r.Tries); n != 1 || r.Tries[0].Status != 200 || r.Tries[0].Fail == "" {
+		t.Fatalf("the broken compaction isn't told as failed: %+v", r.Tries)
+	}
+	sticks.Lock()
+	_, kept := sticks.m[key]
+	sticks.Unlock()
+	if !kept {
+		t.Fatal("a compaction that broke off took the conversation off the account that answers it")
 	}
 }

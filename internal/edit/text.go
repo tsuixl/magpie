@@ -20,7 +20,7 @@ var (
 // setLine replaces the line whose key matches, or inserts newLine after the
 // last key line in the header section (before the first line matching stop).
 func setLine(lines []string, key, newLine string, stop *regexp.Regexp, keyOf func(string) (string, bool)) []string {
-	lastKey := -1
+	lastKey, same := -1, -1
 	for i, line := range lines {
 		if stop != nil && stop.MatchString(line) {
 			break
@@ -30,10 +30,14 @@ func setLine(lines []string, key, newLine string, stop *regexp.Regexp, keyOf fun
 			continue
 		}
 		if k == key {
-			lines[i] = newLine
-			return lines
+			same = i
 		}
 		lastKey = i
+	}
+	if same >= 0 {
+		// The last line for a key that is set twice is the one a reader uses.
+		lines[same] = newLine
+		return lines
 	}
 	at := lastKey + 1
 	out := make([]string, 0, len(lines)+1)
@@ -96,6 +100,18 @@ func splitLines(s string) []string {
 		return []string{""}
 	}
 	return strings.Split(s, "\n")
+}
+
+// joinLinesLike is joinLines for lines edited out of orig: when orig used
+// \r\n for every line break, the lines added or replaced get \r\n too, so the
+// file never ends up with mixed endings. Untouched lines already carry their
+// \r, and a file that mixed endings is left as it was.
+func joinLinesLike(lines []string, orig string) string {
+	s := joinLines(lines)
+	if n := strings.Count(orig, "\n"); n > 0 && strings.Count(orig, "\r\n") == n {
+		s = strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")
+	}
+	return s
 }
 
 func joinLines(lines []string) string {

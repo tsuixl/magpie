@@ -134,9 +134,7 @@ func zcodeProviderJSON(path string, keep bool) any {
 	}
 	base, token := gateway.URL(), gateway.Token
 	if keep {
-		was, _ := edit.GetJSON(path, "provider."+magpieID+".options.baseURL")
-		wasKey, _ := edit.GetJSON(path, "provider."+magpieID+".options.apiKey")
-		base, token = zcodeAddress(was, wasKey)
+		base, token = zcodeKept(filepath.Dir(path))
 	}
 	return map[string]any{"name": "magpie", "kind": "anthropic", "enabled": on, "source": "custom",
 		"options": map[string]any{"apiKey": token, "baseURL": base}, "models": ms}
@@ -155,6 +153,42 @@ func zcodeAddress(was, wasKey string) (string, string) {
 		wasKey = gateway.Token
 	}
 	return was, wasKey
+}
+
+// zcodeKept is the address a sync gives magpie's provider in both of
+// ZCode's files in dir: one on another machine found in either file, so an
+// edit ZCode made to one of them is carried to the other (ZCode's own
+// settings write provider_config.json, and a config.json left on this
+// machine's magpie took the provider back there), else the gateway's.
+func zcodeKept(dir string) (string, string) {
+	var r struct {
+		Config struct {
+			ProviderConfigRules struct {
+				ProviderRules []struct {
+					ProviderID string `json:"providerId"`
+					Config     struct {
+						Access struct {
+							APIKey string `json:"apiKey"`
+						} `json:"access"`
+						API struct {
+							BaseURL string `json:"baseUrl"`
+						} `json:"api"`
+					} `json:"config"`
+				} `json:"providerRules"`
+			} `json:"providerConfigRules"`
+		} `json:"config"`
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "provider_config.json"))
+	json.Unmarshal(b, &r)
+	for _, p := range r.Config.ProviderConfigRules.ProviderRules {
+		if p.ProviderID == magpieID && onAnotherMachine(p.Config.API.BaseURL) {
+			return zcodeAddress(p.Config.API.BaseURL, p.Config.Access.APIKey)
+		}
+	}
+	path := filepath.Join(dir, "config.json")
+	was, _ := edit.GetJSON(path, "provider."+magpieID+".options.baseURL")
+	wasKey, _ := edit.GetJSON(path, "provider."+magpieID+".options.apiKey")
+	return zcodeAddress(was, wasKey)
 }
 
 // onAnotherMachine says base is an http(s) address whose host isn't this
@@ -314,12 +348,7 @@ func zcodeRules(path string, on, keep bool) error {
 		}
 		base, token := gateway.URL(), gateway.Token
 		if keep {
-			c, _ := old["config"].(map[string]any)
-			access, _ := c["access"].(map[string]any)
-			api, _ := c["api"].(map[string]any)
-			was, _ := api["baseUrl"].(string)
-			wasKey, _ := access["apiKey"].(string)
-			base, token = zcodeAddress(was, wasKey)
+			base, token = zcodeKept(filepath.Dir(path))
 		}
 		rule := map[string]any{"providerId": magpieID, "providerName": "magpie", "enabled": true,
 			"config": map[string]any{

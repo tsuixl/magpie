@@ -54,6 +54,11 @@ const modelUsage = `usage:
                                                  own, a name you gave a model just as you wrote it, "Opus 5.5",
                                                  the others as on; off, "Sol" alone — but two a list would name
                                                  the same keep it
+  magpie model compact [on|off]                  whether Codex and Claude Code compact a long conversation at
+                                                 272K: on, as by default, for a model of a longer window (in
+                                                 Claude Code, a Claude model runs to its own); off, at the
+                                                 model's whole window, 1M for a [1m] one. The app's Settings →
+                                                 Long conversations is the same switch
 
   Each is looked for in this order: this model, then <provider id>/*, then the provider's own
   list, then models.dev. --reset removes only the first, and says so when a <provider id>/* value
@@ -90,6 +95,8 @@ func modelCmd(args []string) error {
 		return modelWires()
 	case "suffix", "suffixes":
 		return modelSuffix(args[1:])
+	case "compact", "full-context":
+		return modelCompact(args[1:])
 	case "context", "ctx":
 		return modelContext(args[1:])
 	case "output", "max-output":
@@ -510,6 +517,37 @@ func modelSuffix(args []string) error {
 		fmt.Println(green.Render("✓"), "agents' lists name a model you named just as you wrote it", muted.Render("· the others with their provider"))
 	default:
 		fmt.Println(green.Render("✓"), "agents' lists name each model with its provider again")
+	}
+	return nil
+}
+
+// modelCompact says whether long conversations are compacted at the
+// working window (settings.WorkingWindow), or sets it: off is the app's
+// Full window, every model run to its whole window.
+func modelCompact(args []string) error {
+	if len(args) == 0 {
+		if settings.Load().FullContext {
+			fmt.Println("off", muted.Render("· Codex and Claude Code run a conversation to the model's whole window · magpie model compact on"))
+		} else {
+			fmt.Println("on", muted.Render(fmt.Sprintf("· Codex and Claude Code compact at %dK on a longer window; in Claude Code a Claude model runs to its own · magpie model compact off", settings.WorkingWindow/1000)))
+		}
+		return nil
+	}
+	var full bool
+	switch strings.ToLower(args[0]) {
+	case "on", "yes", "true":
+	case "off", "no", "false", "full":
+		full = true
+	default:
+		return fmt.Errorf("magpie model compact on|off, not %q", args[0])
+	}
+	if err := provider.SetFullContext(full); err != nil {
+		return err
+	}
+	if full {
+		fmt.Println(green.Render("✓"), "Codex and Claude Code run a conversation to the model's whole window", muted.Render("· every turn sends all of it"))
+	} else {
+		fmt.Println(green.Render("✓"), fmt.Sprintf("Codex and Claude Code compact at %dK again", settings.WorkingWindow/1000))
 	}
 	return nil
 }

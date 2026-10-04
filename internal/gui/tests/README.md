@@ -1669,3 +1669,25 @@ It uses isolated API fixtures in English and Chinese on Chromium and WebKit.
 ```sh
 node --test internal/gui/tests/routing-sessions.test.cjs
 ```
+
+## Names on an agent's settings
+
+`agent-field-names.test.cjs` checks that every setting in a connected agent's
+opened row is named, in the window and in the tray panel, in English and
+Chinese. A setting nobody has picked is the agent's own logo on the shut row,
+for want of room, so Aside's four task roles and its picture model all read
+"default" under one logo there; the panel already names them as its rows open
+and the window now does the same. It also checks that no name is cut short by
+its column (Aside's `standard`, Claude Code's `thinking`, in the panel's 44px).
+It uses Settings → Agents at 1240×900 and the panel at 440×720. The API is
+faked; no user configuration is read or changed.
+
+```sh
+node --test internal/gui/tests/agent-field-names.test.cjs
+```
+
+`import-row.test.cjs` checks the row of an app magpie is added to by a link
+of its own (Cindy) on the Agents page: a line under its name says whether
+magpie is added (green once it is), its button stands where the other rows'
+model picker does, as wide and lined up with it at 960 and 700px, and a click
+opens the app's link. English and Chinese, Chromium and WebKit.

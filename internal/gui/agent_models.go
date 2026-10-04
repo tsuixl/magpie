@@ -83,11 +83,13 @@ func agentFields(a *agent.Agent, vals map[string]string) []fieldJSON {
 }
 
 // agentModelCount is the line under an agent's name, nil for an agent that
-// doesn't pick among the catalog. Its pickers list only the models shown, so
+// doesn't pick among the catalog nor has its menu from the gateway's list
+// (agent.ListsModels). Its pickers list only the models shown, so
 // with every one taken out they have no catalog entry left, yet the line is
 // the one way to put them back (#356): it stays while any is hidden.
-func agentModelCount(id string, fields []fieldJSON) *modelCountJSON {
-	if takesCatalog(fields) {
+func agentModelCount(a *agent.Agent, fields []fieldJSON) *modelCountJSON {
+	id := a.ID
+	if takesCatalog(fields) || a.ListsModels {
 		return modelCount(id)
 	}
 	if len(provider.HiddenModels(id)) == 0 {

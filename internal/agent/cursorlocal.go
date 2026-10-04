@@ -8,14 +8,22 @@ package agent
 // Private Inference"). The endpoint it takes from a model's own settings,
 // else its Open configuration dialog's (kept in the state.vscdb regular
 // Cursor shares), else from its environment: CURSOR_LOCAL_AGENT_BASE_URL
-// and CURSOR_LOCAL_AGENT_API_KEY. magpie writes nothing of Cursor's: its
-// row gives the command that starts the app with those (see Agent.Launch),
-// and the gateway's /models tells it, for each model, the APIs it is
-// served on (api_types) and its limits (capabilities), which it reads to
-// pick Anthropic Messages, Responses or Chat and its context.
+// and CURSOR_LOCAL_AGENT_API_KEY. magpie writes nothing of Cursor's — the
+// Open configuration's base URL and key are regular Cursor's own override
+// settings too, so writing them would move regular Cursor as well. It sets
+// the two variables, which only this build reads, for the user instead
+// (cursorLocalUserEnv: launchctl on the Mac, the registry's Environment on
+// Windows, environment.d on Linux), so an app opened from the Dock or the
+// Start menu has them, and the row is connected like any other agent's;
+// the command that starts it with them (Agent.Launch) stays for a start
+// from a shell. The gateway's /models tells it, for each model, the APIs
+// it is served on (api_types) and its limits (capabilities), which it
+// reads to pick Anthropic Messages, Responses or Chat and its context.
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/gateway"
 )
 
@@ -88,7 +97,7 @@ func findCursorLocal(roots []string) string {
 					if exe := plistExecutable(filepath.Join(dir, "Contents", "Info.plist")); exe != "" {
 						return filepath.Join(dir, "Contents", "MacOS", exe)
 					}
-					return filepath.Join(dir, "Contents", "MacOS", p.exe())
+					return filepath.Join(dir, "Contents", "MacOS", p.macExe())
 				}
 				continue
 			}
@@ -120,6 +129,15 @@ func (p cursorProduct) exe() string {
 	}
 	if runtime.GOOS == "linux" {
 		return n
+	}
+	return p.macExe()
+}
+
+// macExe is the program's name in a .app, which is a Mac's on any system.
+func (p cursorProduct) macExe() string {
+	n := p.ApplicationName
+	if n == "" {
+		return "Cursor"
 	}
 	return strings.ToUpper(n[:1]) + n[1:]
 }
@@ -162,18 +180,94 @@ func CursorLocalLaunch(app, gw string) string {
 	return "CURSOR_LOCAL_AGENT_BASE_URL=" + base + " CURSOR_LOCAL_AGENT_API_KEY=" + key + " '" + strings.ReplaceAll(app, "'", `'\''`) + "'"
 }
 
+// cursorLocalVars are the variables the build reads its endpoint from.
+var cursorLocalVars = []string{"CURSOR_LOCAL_AGENT_BASE_URL", "CURSOR_LOCAL_AGENT_API_KEY"}
+
+// cursorLocalEnv is what they are set to for the gateway at gw.
+func cursorLocalEnv(gw string) map[string]string {
+	return map[string]string{cursorLocalVars[0]: gw + "/v1", cursorLocalVars[1]: gateway.TokenFor(CursorLocalID)}
+}
+
+// cursorLocalMark is magpie's own note that the variables are set for the
+// user, which the row reads as connected: the Mac forgets launchctl's at a
+// restart, and magpie sets them again when it starts (KeepCursorLocalEnv).
+func cursorLocalMark() string { return filepath.Join(appdir.Config(), "cursor-local.env") }
+
+func cursorLocalWired() bool { return isFile(cursorLocalMark()) }
+
+// cursorLocalUserEnv sets the variables for the user's apps started from
+// now on (nil clears them). The system's own (cursorlocal_env_*.go), a var
+// so tests set nothing outside their folder.
+var cursorLocalUserEnv = setUserEnv
+
+// cursorLocalOn sets the variables for the gateway, and notes it; off
+// clears them.
+func cursorLocalOn(on bool) error {
+	if !on {
+		if err := cursorLocalUserEnv(nil); err != nil {
+			return err
+		}
+		if err := os.Remove(cursorLocalMark()); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	env := cursorLocalEnv(gateway.URL())
+	if err := cursorLocalUserEnv(env); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, k := range cursorLocalVars {
+		b.WriteString(k + "=" + env[k] + "\n")
+	}
+	if err := os.MkdirAll(filepath.Dir(cursorLocalMark()), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(cursorLocalMark(), []byte(b.String()), 0o600)
+}
+
+// KeepCursorLocalEnv sets the variables again when the gateway is served,
+// with its address now, while Cursor Private Inference is connected: the
+// Mac's launchctl ones are gone after a restart, and the port may have
+// changed. The app takes them when it is next opened.
+func KeepCursorLocalEnv(context.Context) {
+	if !cursorLocalWired() {
+		return
+	}
+	if err := cursorLocalOn(true); err != nil {
+		log.Printf("%s: setting CURSOR_LOCAL_AGENT_BASE_URL again: %v", cursorLocalName, err)
+	}
+}
+
 func cursorLocal() *Agent {
 	return &Agent{
 		ID: CursorLocalID, Name: cursorLocalName, Icon: "cursor", Aliases: []string{"cursor-private-inference"},
-		detect: func() bool { return cursorLocalApp() != "" },
+		// its model picker lists the gateway's /models as its key is shown
+		// them, which the row's Models button picks
+		ListsModels: true,
+		detect:      func() bool { return cursorLocalApp() != "" },
 		Launch: func() string {
 			if app := cursorLocalApp(); app != "" {
 				return CursorLocalLaunch(app, gateway.URL())
 			}
 			return ""
 		},
+		Fields: []Field{{
+			Key: "provider", Label: "provider",
+			Get: func() string {
+				if cursorLocalWired() {
+					return magpieID
+				}
+				return ""
+			},
+			Set: func(v string) error { return cursorLocalOn(v != "") },
+			Options: func(map[string]string) []Option {
+				return []Option{{Value: magpieID, Label: "magpie", Icon: "magpie",
+					Note: "CURSOR_LOCAL_AGENT_BASE_URL and _API_KEY set for your user, which only this build reads (quit it and open it again)"}}
+			},
+		}},
 		Notice: func() string {
-			return cursorLocalName + " takes magpie's gateway from how it is started: quit it, then start it with the command its row copies. A base URL set in its Open configuration comes first, so leave that empty (or set it to " + gateway.URL() + "/v1 with the key " + gateway.TokenFor(CursorLocalID) + ")."
+			return cursorLocalName + " reads magpie's gateway from CURSOR_LOCAL_AGENT_BASE_URL and CURSOR_LOCAL_AGENT_API_KEY, now set for your user: quit it and open it again. A base URL set in its Open configuration comes first, so leave that empty (or set it to " + gateway.URL() + "/v1 with the key " + gateway.TokenFor(CursorLocalID) + ")."
 		},
 	}
 }

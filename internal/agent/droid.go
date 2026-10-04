@@ -205,7 +205,7 @@ func droidIn(at place) *Agent {
 		return droidCustom{}, false
 	}
 	return &Agent{
-		ID: "droid", Name: "Droid", Icon: "factory", Aliases: []string{"factory", "factory-droid"},
+		ID: "droid", Name: "Droid", Icon: "factory", Aliases: []string{"factory", "factory-droid"}, Spelled: prefixed,
 		// droid's requests to a custom model carry factory-cli/<version>
 		UA:  []string{"factory-cli"},
 		Bin: "droid", Dir: dir, Path: path,

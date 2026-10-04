@@ -93,7 +93,7 @@ func dshAt(at place) *Agent {
 		path = files[0]
 	}
 	return &Agent{
-		ID: "dsh", Name: "DeepSeek Harness", Icon: "deepseek-color", Aliases: []string{"deepseek-harness"},
+		ID: "dsh", Name: "DeepSeek Harness", Icon: "deepseek-color", Aliases: []string{"deepseek-harness"}, Spelled: prefixed,
 		UA:  []string{"deepseek-harness"},
 		Bin: "dsh", Dir: dir, Path: path,
 		Sync: func() error { return dshSync(dir, gw()) },
@@ -123,7 +123,7 @@ func dshAt(at place) *Agent {
 				return false
 			}
 			_, items, err := dshRead(files[0])
-			return err == nil && dshWired(items)
+			return err == nil && dshWired(dshOver(dir, items))
 		},
 		// connected so, Disconnect takes the route out, the start magpie
 		// wrote and its key; the model picked in dsh stays its own
@@ -137,6 +137,9 @@ func dshAt(at place) *Agent {
 				if err := dshSetFile(f, "", true, nil, gw()); err != nil {
 					return err
 				}
+			}
+			if err := dshMirrorHome(dir, nil, gw()); err != nil {
+				return err
 			}
 			return dshEnv(dir, false)
 		},
@@ -180,6 +183,90 @@ func dshProfiles(dir string) []string {
 		}
 	}
 	return append(web, rest...)
+}
+
+// dshHomePatch is dsh's home patch layer, $DSH_HOME/cordis.patch.yml: it is
+// applied over every profile's own, so an entry there replaces the profile's
+// of the same id, whatever magpie wrote in that one (#804).
+func dshHomePatch(dir string) string { return filepath.Join(dir, "cordis.patch.yml") }
+
+// dshOver is a profile's patch list as dsh goes by it: the home layer's
+// entries after the profile's own, so dshFindLast finds the one dsh uses.
+// It is for reading only.
+func dshOver(dir string, items []dshItem) []dshItem {
+	_, home, err := dshRead(dshHomePatch(dir))
+	if err != nil || len(home) == 0 {
+		return items
+	}
+	return append(append([]dshItem{}, items...), home...)
+}
+
+// dshHomeHas reports whether the home layer has an entry of this id, which
+// then goes over every profile's.
+func dshHomeHas(dir, id string) bool {
+	_, home, err := dshRead(dshHomePatch(dir))
+	return err == nil && dshFindLast(home, id) >= 0
+}
+
+// dshMirrorHome gives the home layer what magpie wrote in the profiles, for
+// the entries it overrides them with: magpie's route in a llm-pi-ai entry
+// there (the user's routes beside it stay), and in an agent-default-model
+// there the model magpie set. Without it dsh ran the home layer's snapshot
+// while magpie read as connected (#804). An entry the home layer doesn't
+// have is not added: the profiles' own then apply, as written.
+func dshMirrorHome(dir string, models []catalog.Model, gw string) error {
+	files := dshProfiles(dir)
+	if len(files) == 0 {
+		return nil
+	}
+	home := dshHomePatch(dir)
+	head, items, err := dshRead(home)
+	if err != nil {
+		return nil
+	}
+	_, web, err := dshRead(files[0])
+	if err != nil {
+		return nil
+	}
+	before := dshJoin(items)
+	if dshFindLast(items, dshPiRow) >= 0 {
+		on := dshWired(web)
+		if !on || len(models) > 0 {
+			if items, err = dshPutRoute(items, on, models, gw); err != nil {
+				return err
+			}
+		}
+	}
+	if i := dshFindLast(items, "agent-default-model"); i >= 0 {
+		j := dshFindLast(web, "agent-default-model")
+		switch {
+		case j >= 0 && dshOurs(web[j]):
+			if !dshOurs(items[i]) {
+				stash(map[string]string{dshStashKey(home, "agent-default-model"): strings.Join(items[i].lines, "\n")})
+			}
+			items[i] = dshItem{id: "agent-default-model", magpie: true, lines: append([]string{}, web[j].lines...)}
+		case dshOurs(items[i]):
+			// magpie's start gone from the profiles: the user's back, or none
+			if old := unstash(dshStashKey(home, "agent-default-model")); old != "" {
+				items[i] = dshItem{id: "agent-default-model", lines: strings.Split(old, "\n")}
+			} else {
+				items = append(items[:i], items[i+1:]...)
+			}
+		}
+	}
+	if dshJoin(items) == before {
+		return nil
+	}
+	return dshWrite(home, head, items)
+}
+
+func dshJoin(items []dshItem) string {
+	var b strings.Builder
+	for _, it := range items {
+		b.WriteString(strings.Join(it.lines, "\n"))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // dshItem is one entry of the patch list, as its lines.
@@ -437,8 +524,9 @@ func dshGet(dir string) string {
 
 // dshStart reads the model a profile's sessions start on: the one last picked
 // in dsh, saved in its settings, which go over every profile, else the
-// profile's own agent-default-model entry.
+// agent-default-model entry of the home layer or the profile's own.
 func dshStart(dir string, items []dshItem) string {
+	items = dshOver(dir, items)
 	sel := edit.GetYAMLMap(filepath.Join(dir, "settings.yaml"), "agent-default-model")
 	if sel["model"] == "" {
 		if i := dshFindLast(items, "agent-default-model"); i >= 0 {
@@ -501,15 +589,24 @@ func dshCheck(dir, gw string) string {
 		get := func(string) (string, bool) { return base, base != "" }
 		return wiringOff("DeepSeek Harness", path, get, "baseURL", gw+"/v1")
 	}
+	_, items, _ := dshRead(files[0])
+	routeFile := files[0]
+	if dshHomeHas(dir, dshPiRow) {
+		routeFile = dshHomePatch(dir)
+		// the home layer's llm-pi-ai goes over every profile's: without
+		// magpie's route it lists none of magpie's models anywhere
+		if dshRouteIn(dshOver(dir, items)) == nil && dshWired(items) {
+			return "DeepSeek Harness's home patch layer (" + routeFile + ") sets llm-pi-ai over every profile without magpie's route, so sessions list none of magpie's models; Apply again writes it there too"
+		}
+	}
 	// a profile of dsh's (its desktop app's) without magpie's route:
 	// sessions there list dsh's own models alone
 	for _, f := range files[1:] {
-		if _, items, err := dshRead(f); err == nil && !dshWired(items) {
+		if _, items, err := dshRead(f); err == nil && !dshWired(dshOver(dir, items)) {
 			return "DeepSeek Harness's " + filepath.Base(filepath.Dir(f)) + " profile (" + f + ") has none of magpie's models, so sessions there list DeepSeek's own alone"
 		}
 	}
-	_, items, _ := dshRead(files[0])
-	route := dshRouteIn(items)
+	route := dshRouteIn(dshOver(dir, items))
 	get := func(k string) (string, bool) {
 		if v := yamlKey(route, k); v != nil && v.Kind == yaml.ScalarNode {
 			return v.Value, true
@@ -527,7 +624,7 @@ func dshCheck(dir, gw string) string {
 	if route == nil {
 		api = "" // dsh's DeepSeek row taken over: Chat Completions
 	}
-	if off := wiringOff("DeepSeek Harness", files[0], get, "baseURL", dshBaseURL(dshAPI(api), gw)); off != "" {
+	if off := wiringOff("DeepSeek Harness", routeFile, get, "baseURL", dshBaseURL(dshAPI(api), gw)); off != "" {
 		return off
 	}
 	// dsh counts a model its provider doesn't list as none at all and refuses
@@ -541,9 +638,12 @@ func dshCheck(dir, gw string) string {
 		if err != nil {
 			continue
 		}
-		r := dshRouteIn(it)
+		r := dshRouteIn(dshOver(dir, it))
 		if r == nil {
 			continue // no route yet: the sync this asks for writes one
+		}
+		if dshHomeHas(dir, dshPiRow) {
+			f = dshHomePatch(dir)
 		}
 		if ref, ok := strings.CutPrefix(dshStart(dir, it), magpieID+"/"); ok && !dshRouteLists(r, ref) {
 			// a route out of date is written again — Apply again, or picking
@@ -610,6 +710,9 @@ func dshSet(dir, v, gw string) error {
 		if err := dshSetFile(f, v, true, models, gw); err != nil {
 			return err
 		}
+	}
+	if err := dshMirrorHome(dir, models, gw); err != nil {
+		return err
 	}
 	// what an older dsh was given is no use now
 	if _, err := os.Stat(legacy); err == nil {
@@ -1066,7 +1169,10 @@ func dshSync(dir, gw string) error {
 			return err
 		}
 	}
-	return dshFillNewProfiles(files, models, gw)
+	if err := dshFillNewProfiles(files, models, gw); err != nil {
+		return err
+	}
+	return dshMirrorHome(dir, models, gw)
 }
 
 // dshRouteAgain writes magpie's route again in one patch list where it is no
@@ -1160,7 +1266,11 @@ func dshWiredOnce() string {
 	}
 	var trouble []string
 	models := magpieModels("dsh")
-	for _, f := range dshProfiles(dir) {
+	files := dshProfiles(dir)
+	if len(files) > 0 {
+		files = append(files, dshHomePatch(dir)) // left as it is without magpie's route
+	}
+	for _, f := range files {
 		written, err := dshRouteAgain(f, models, gateway.URL())
 		if err != nil {
 			trouble = append(trouble, fmt.Sprintf("writing dsh's route again in %s: %s", f, dshWriteError(err)))
@@ -1351,7 +1461,7 @@ func dshGetEffort(dir string) string {
 	if err != nil {
 		return ""
 	}
-	return dshEffortOf(items)
+	return dshEffortOf(dshOver(dir, items))
 }
 
 // dshSetEffort writes v as the effort sessions start with: into
@@ -1409,7 +1519,7 @@ func dshSetEffort(dir, v, gw string) error {
 				return err
 			}
 		}
-		return nil
+		return dshMirrorHome(dir, magpieModels("dsh"), gw)
 	}
 
 	if v != "" && !contains(dshEfforts, v) {

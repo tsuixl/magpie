@@ -120,6 +120,13 @@ type Provider struct {
 	// plugin's provider says it takes, else none; 0 is no limit.
 	MaxConcurrency *int `json:"maxConcurrency,omitempty"`
 
+	// PriceRate is what the provider charges against the official price
+	// (ITea312, #819): a relay that bills 0.8× or 1.5× of it. It scales the
+	// provider's list price, else its maker's, wherever a cost is counted;
+	// a price the user set for one of its models stands as set. 0 is the
+	// price as listed; at most three decimals (PriceRateOK).
+	PriceRate float64 `json:"priceRate,omitempty"`
+
 	// Headers are extra HTTP request headers sent to the vendor, exactly as
 	// the user typed them. They ride on every request magpie makes to a plain
 	// key+URL provider — forwarded calls, connectivity tests, and model-list
@@ -821,8 +828,9 @@ func normalize(p Provider) Provider {
 		p.Key = OpenCodeAnonymousKey
 	}
 	// a Zen provider saved before its preset had System One for Jev
-	// (01huadalang: its Jev was asked as a chat model, and failed)
-	if p.Preset == "opencode-zen" && p.Decide == "" && p.Chat != "" {
+	// (01huadalang: its Jev was asked as a chat model, and failed), an
+	// OpenRouter one before its decision models were listed (ARNO)
+	if (p.Preset == "opencode-zen" || p.Preset == "openrouter") && p.Decide == "" && p.Chat != "" {
 		if pr := Preset(p.Preset); pr != nil {
 			p.Decide = pr.Decide
 		}

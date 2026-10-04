@@ -415,7 +415,7 @@ func (p Provider) ModelAPI(model string) (Protocol, bool) {
 	if len(p.Speaks()) < 2 {
 		return "", false
 	}
-	proto := Protocol(settings.Load().ModelAPIs[p.ID+"/"+model])
+	proto := Protocol(heldSettings().ModelAPIs[p.ID+"/"+model])
 	if proto == "" || !slices.Contains(Protocols, proto) || p.Base(proto) == "" {
 		return "", false
 	}
@@ -612,7 +612,7 @@ func (e Entry) Label() string {
 // is that name just as they wrote it, and the vendor's keep Label's.
 func Labels(es []Entry) []string {
 	out := make([]string, len(es))
-	s := settings.Load()
+	s := heldSettings()
 	plain := s.PlainNames
 	own := !plain && s.PlainOwnNames
 	same := map[string]int{}

@@ -270,7 +270,7 @@ func ompAt(at place, dir string, entry func() ompProviderEntry) *Agent {
 		}
 	}
 	return &Agent{
-		ID: "omp", Name: "omp", Icon: "omp", Aliases: []string{"oh-my-pi"},
+		ID: "omp", Name: "omp", Icon: "omp", Aliases: []string{"oh-my-pi"}, Spelled: prefixed,
 		UA:  []string{"oh-my-pi"},
 		Bin: "omp", Dir: dir, Path: path,
 		// a role's thinking level is omp's, after whichever model it is on;
