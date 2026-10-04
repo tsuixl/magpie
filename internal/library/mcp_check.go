@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/yetone/magpie/internal/gateway"
@@ -403,7 +402,7 @@ func netHealth(ctx context.Context, err error) ServerHealth {
 	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 		return timedOut()
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) {
+	if errors.Is(err, connectionRefused) {
 		return failed("refused", err.Error())
 	}
 	var ue *url.Error

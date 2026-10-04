@@ -67,6 +67,12 @@ jobs:
         if: runner.os == 'Windows'
         run: go test -run '^$' ./...
 
+      # These checks use in-memory errors and loopback test servers. Run
+      # the native Winsock refusal case rather than only compiling it.
+      - name: Windows MCP health
+        if: runner.os == 'Windows'
+        run: go test -v -count=1 -timeout 2m ./internal/library -run '^(TestNetHealth|TestCheckHTTP)$'
+
       # Usage isolates USERPROFILE and the agent homes; execute its native
       # ChangeTime checks rather than only cross-compiling the Windows API.
       - name: Windows usage cache
