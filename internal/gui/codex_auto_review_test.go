@@ -31,6 +31,12 @@ func TestCodexAutoReviewSetting(t *testing.T) {
 	if err := provider.Save(provider.Provider{ID: "fake", Name: "Fake", Key: "k", Models: []string{"m1", "m2"}, Chat: "http://127.0.0.1:9/v1"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := provider.Save(provider.Provider{ID: "hidden", Name: "Hidden", Key: "k", Unlisted: true, Models: []string{"reviewer"}, Chat: "http://127.0.0.1:9/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.SaveGroup(provider.Group{ID: "checks", Name: "Checks", Members: []string{"fake/m2"}}); err != nil {
+		t.Fatal(err)
+	}
 	call := func(path, body string) (int, map[string]any) {
 		t.Helper()
 		rec := httptest.NewRecorder()
@@ -51,9 +57,20 @@ func TestCodexAutoReviewSetting(t *testing.T) {
 	if code, _ := call("/api/settings", `{"theme":"dark"}`); code != 200 || settings.Load().CodexAutoReview != "fake/m1" {
 		t.Errorf("another save (%d) lost the setting: %q", code, settings.Load().CodexAutoReview)
 	}
-	for _, bad := range []string{"nope/x", "m1", "off"} {
+	// Groups and models of an unlisted provider are still valid targets.
+	// Restore m1 before checking that rejected choices leave it in place.
+	for _, id := range []string{"group/checks", "hidden/reviewer", "fake/m1"} {
+		if code, _ := call("/api/settings/codex-auto-review", `{"model":"`+id+`"}`); code != 200 || settings.Load().CodexAutoReview != id {
+			t.Fatalf("valid reviewer %s: %d, %q", id, code, settings.Load().CodexAutoReview)
+		}
+	}
+	keptTag := provider.CodexListTag()
+	for _, bad := range []string{"nope/x", "m1", "off", "fake/missing", "fake/", "group/missing"} {
 		if code, _ := call("/api/settings/codex-auto-review", `{"model":"`+bad+`"}`); code < 400 || settings.Load().CodexAutoReview != "fake/m1" {
 			t.Errorf("%s: %d, %q", bad, code, settings.Load().CodexAutoReview)
+		}
+		if provider.CodexListTag() != keptTag {
+			t.Errorf("rejecting %s changed Codex's catalog tag", bad)
 		}
 	}
 	if code, out := call("/api/settings/codex-auto-review", `{"model":" fake/m2 "}`); code != 200 || out["codexAutoReview"] != "fake/m2" {

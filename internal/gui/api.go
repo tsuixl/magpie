@@ -1171,7 +1171,10 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		v := strings.TrimSpace(in.Model)
 		if v != "" {
-			if _, _, ok := provider.Resolve(v); !ok {
+			// Resolve intentionally accepts arbitrary names under a known
+			// provider. An approval reviewer must be a model or group magpie
+			// actually lists, including providers kept unlisted for routing.
+			if !slices.ContainsFunc(provider.Served(), func(e provider.Entry) bool { return e.ID == v }) {
 				fail(rw, fmt.Errorf("no model %s for Codex's auto-review", v))
 				return
 			}

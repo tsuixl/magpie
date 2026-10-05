@@ -33,6 +33,7 @@ three.
 - There are no native `<select>` elements and no colored left-border stripes. State is shown with a dot or a swatch.
 - The page must work in Chromium (Windows' WebView2) and WebKit (macOS, and WebKitGTK on Linux). GUI tests run in both engines.
 - Tests never touch a live agent config. The package's `TestMain` runs under `testenv`'s home of its own. Playwright tests serve `assets/` with isolated `/api` fixtures.
+- `POST /api/settings/codex-auto-review` accepts an empty value (Codex's own choice) or an exact model/group ID in `provider.Served`, including unlisted providers. A known provider with an unknown or empty model name is rejected without changing the saved reviewer or catalog tag. Generic gateway request resolution remains permissive; it is not the validator for this setting. See `Handler` in [`api.go`](../../internal/gui/api.go) and `TestCodexAutoReviewSetting` in [`codex_auto_review_test.go`](../../internal/gui/codex_auto_review_test.go).
 
 ## Verification
 
