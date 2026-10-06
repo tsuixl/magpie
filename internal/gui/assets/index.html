@@ -8,6 +8,7 @@
 <script src="boot.js"></script>
 <script src="theme.js"></script>
 <script src="omarchy.js"></script>
+<script src="fonts.js"></script>
 <link rel="stylesheet" href="app.css">
 <link rel="stylesheet" href="routing.css">
 <link rel="stylesheet" href="library.css">
@@ -248,6 +249,22 @@
       <div class="row pref" id="textSizeRow">
         <div class="who"><div class="name" data-t>Text size</div><div class="sub" id="textSizeSub"></div></div>
         <div id="textSizeSegs"></div>
+      </div>
+      <div class="row pref font-row" id="uiFontRow" hidden>
+        <div class="who"><div class="name" data-t>Interface font</div><div class="sub font-note"></div></div>
+        <div class="font-controls">
+          <button type="button" class="proto pick font-family" aria-haspopup="menu" aria-expanded="false"></button>
+          <button type="button" class="proto pick font-style" aria-haspopup="menu" aria-expanded="false"></button>
+          <div class="font-preview">Aa 0123 · 中文</div>
+        </div>
+      </div>
+      <div class="row pref font-row" id="codeFontRow" hidden>
+        <div class="who"><div class="name" data-t>Code font</div><div class="sub font-note"></div></div>
+        <div class="font-controls">
+          <button type="button" class="proto pick font-family" aria-haspopup="menu" aria-expanded="false"></button>
+          <button type="button" class="proto pick font-style" aria-haspopup="menu" aria-expanded="false"></button>
+          <div class="font-preview">Aa 0123 · 中文</div>
+        </div>
       </div>
       <div class="row pref">
         <div class="who"><div class="name" data-t>Tray icon</div><div class="sub" data-t>What clicking magpie’s icon in the menu bar or tray opens</div></div>

@@ -1,5 +1,26 @@
 # Dropdown browser regression
 
+## Installed desktop fonts
+
+`fonts.test.cjs` exercises the interface/code font controls with installed
+family/style fixtures: independent traits, literal names, search and keyboard
+selection, rapid queued saves and rollback, reload, unavailable faces,
+discovery failure and refresh, empty collections, platform fallback,
+Omarchy precedence and browser-mode isolation. It checks narrow windows and
+no scroll on click in Chromium and WebKit, in English and Chinese.
+`ARTIFACT_DIR` retains screenshots; `MAGPIE_FONT_ASSETS` can point to an older
+asset directory to verify that the test fails on the missing picker.
+
+```sh
+node --test internal/gui/tests/fonts.test.cjs internal/gui/tests/win-fonts.test.cjs
+go test -v ./internal/fonts
+go test -tags nogui ./internal/settings ./internal/gui -run '^TestFont'
+```
+
+The native test reads the operating system's actual installed font metadata;
+it runs on Windows, macOS and Linux in CI. Browser fixtures never read or
+write user settings, install fonts or contact a live gateway.
+
 ## Gateway Caller Keys
 
 `gateway-caller-keys.test.cjs` checks the named caller-key list on the

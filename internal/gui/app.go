@@ -369,6 +369,7 @@ func Run(version string, showMain bool, link string) error {
 
 	h.panel = h.makePanel()
 	h.main = h.makeMain("/?" + theme)
+	onFonts = h.fontsChanged
 
 	// the menu in the page's language, relabelled when that changes (#301)
 	labels := trayMenuLabels(trayLang(settings.Load().Lang, systemLang), version, "")
