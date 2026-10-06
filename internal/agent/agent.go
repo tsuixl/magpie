@@ -208,6 +208,13 @@ type Agent struct {
 	// detect, when set, says whether the agent is here in place of looking
 	// for its files and binary: a distro's, probed once.
 	detect func() bool
+	// reach, when set, is the gateway's address as the agent's config has
+	// it where that is kept apart from Gateway (this machine's Codex at an
+	// address of the user's, #816): Drift tries it (see reach.go).
+	reach func() string
+	// move, when set, points the agent's config at to where it names the
+	// gateway at from: an address of WSL's that changed (#1013).
+	move func(from, to string) error
 }
 
 // Running reports whether a process whose command line matches any pattern

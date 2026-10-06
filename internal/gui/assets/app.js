@@ -754,23 +754,56 @@ function profileDetail(p, footed) {
 // driftFix is the one thing a drifted agent shows: an amber pill after its
 // name that sets magpie's settings again. What is off is its tooltip; taking
 // the config as it is now is in the row's menu.
+// An agent whose config is right but whose address doesn't answer (#1013)
+// has nothing to set again: its pill says what has to listen there, unless
+// WSL now reaches Windows at another address, which it moves the config to.
 function driftFix(a, label = "Apply again") {
   const d = a.drift, f = a.fields.find((x) => x.key === d.field);
   const want = (f && optionFor(f, d.want)?.label) || d.want;
   const fix = el("button", "ag-fix");
   fix.type = "button";
   fix.title = `${t(DRIFT_WHY[d.kind] || DRIFT_WHY.unwired, { agent: a.name, model: want })}\n${d.detail}`;
+  const deaf = d.kind === "unreachable";
+  if (deaf && d.move) label = t("Use {url}", { url: d.move.replace(/^https?:\/\//, "") });
+  else if (deaf) label = "How to fix";
   fix.setAttribute("aria-label", t(label));
-  fix.append(svg(REAPPLY, 11, 1.8), el("span", "", t(label)));
-  fix.onclick = (e) => { e.stopPropagation(); reapplyAgent(a, fix); };
+  fix.append(svg(deaf && !d.move ? INFO_I : REAPPLY, 11, 1.8), el("span", "", t(label)));
+  fix.onclick = (e) => {
+    e.stopPropagation();
+    if (deaf && !d.move) explainDrift(a);
+    else reapplyAgent(a, fix);
+  };
   return fix;
+}
+
+// explainDrift: what has to listen at an address an agent can't reach
+// magpie by — too long for the status line, so a dialog of its own.
+function explainDrift(a) {
+  const ed = el("div", "editor");
+  const head = el("div", "ehead");
+  head.append(el("b", "", t(DRIFT_WHY.unreachable, { agent: a.name })));
+  ed.append(head);
+  ed.append(el("p", "lib-confirm drift-why", a.drift.detail));
+  const bar = el("div", "bar");
+  const ok = el("button", "text primary", t("OK"));
+  ok.onclick = (e) => { e.stopPropagation(); closeConfirmAsk(); };
+  bar.append(el("span", "grow"), ok);
+  ed.append(bar);
+  confirmAsk = ed;
+  openModal(ed);
+  $("#modal").classList.add("lib");
+  ok.focus({ preventScroll: true });
 }
 
 const DRIFT_WHY = {
   unwired: "{agent} no longer goes through magpie — its config was changed",
   replaced: "{agent} was switched off {model} outside magpie",
   bypassed: "{agent} was used without going through magpie — restart it after applying",
+  unreachable: "{agent} is set up, but nothing answers at the address it reaches magpie by",
 };
+
+// an i in a circle: the pill that explains rather than acts
+const INFO_I = "M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM8 7.25V11M8 5v.01";
 
 const REAPPLY = "M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3.25h-3.25";
 
@@ -11686,7 +11719,7 @@ function closeProtoMenu() {
 // ticked ones, in the menu's order, once it closes (and only if they
 // changed). With live, choose runs after each tick instead; "" is none
 // of them and closes it, "\x00" a note to read.
-function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key speaks", cls = "", align = "left", live = false) {
+function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key speaks", cls = "", align = "left", live = false, search = "") {
   closeProtoMenu();
   const multi = Array.isArray(value);
   let picked = multi ? [...value] : null;
@@ -11694,6 +11727,15 @@ function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key sp
   const box = el("div", "pop proto-menu" + (cls ? " " + cls : ""));
   box.setAttribute("role", "menu");
   box.append(el("div", "pm-head", t(head)));
+  let filter = null;
+  if (search) {
+    const top = el("div", "sc-top");
+    filter = el("input", "sc-q");
+    filter.placeholder = t(search);
+    filter.setAttribute("aria-label", t(search));
+    top.append(filter);
+    box.append(top);
+  }
   const tick = (b, o) => {
     b.classList.toggle("on", isOn(o.v));
     b.setAttribute("aria-checked", isOn(o.v));
@@ -11724,6 +11766,10 @@ function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key sp
     box.append(b);
     return b;
   });
+  if (filter) filter.oninput = () => {
+    const q = filter.value.trim().toLocaleLowerCase();
+    items.forEach((b, i) => { b.hidden = !opts[i].always && !opts[i].name.toLocaleLowerCase().includes(q); });
+  };
   document.body.append(box);
   // under the pill, or above it when the window runs out
   const r = anchor.getBoundingClientRect(), w = box.offsetWidth, h = box.offsetHeight, pad = 8;
@@ -11745,12 +11791,19 @@ function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key sp
   // Scrolling the menu keeps it open; scrolling outside moves its anchor.
   const scroll = (e) => { if (!box.contains(e.target)) closeProtoMenu(); };
   const keys = (e) => {
-    const i = items.indexOf(document.activeElement);
+    const shown = filter ? items.filter((b) => !b.hidden) : items;
+    const i = shown.indexOf(document.activeElement);
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeProtoMenu(); anchor.focus(); }
     else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault(); e.stopPropagation();
-      const n = items.length, from = i < 0 ? (e.key === "ArrowDown" ? n - 1 : 0) : i;
-      items[(from + (e.key === "ArrowDown" ? 1 : n - 1)) % n].focus();
+      const n = shown.length, from = i < 0 ? (e.key === "ArrowDown" ? n - 1 : 0) : i;
+      if (n) shown[(from + (e.key === "ArrowDown" ? 1 : n - 1)) % n].focus();
+    } else if (filter && e.key === "Enter" && document.activeElement === filter) {
+      const first = shown.find((b) => !opts[items.indexOf(b)].always);
+      if (first) { e.preventDefault(); first.click(); }
+    } else if (filter && (e.key === "Home" || e.key === "End") && i >= 0) {
+      e.preventDefault();
+      shown[e.key === "Home" ? 0 : shown.length - 1]?.focus();
     }
   };
   document.addEventListener("mousedown", outside, true);
@@ -11762,7 +11815,7 @@ function openProtoMenu(anchor, opts, value, choose, head = "Protocol this key sp
     choose(opts.map((o) => o.v).filter((v) => picked.includes(v)));
   } : null;
   protoMenu = { box, anchor, outside, keys, scroll, done };
-  (items.find((b) => b.classList.contains("on")) || items[0]).focus({ preventScroll: true });
+  (filter || items.find((b) => b.classList.contains("on")) || items[0]).focus({ preventScroll: true });
 }
 
 // keyPill is a key provider's row badge: the key in use, or how many are.
@@ -12575,7 +12628,9 @@ function usageHandle(sub, card) {
   return b;
 }
 
-const usageKeys = () => [...new Set([...$("#subscriptionUsage").children].map((c) => c.dataset.key))];
+// the subscriptions in the order on the page: the Usage page's cards, or
+// in the panel the rows of its Allowances tab's arranging
+const usageKeys = () => [...new Set([...(mode === "panel" ? $$("#panelQuota .pq-arow") : $("#subscriptionUsage").children)].map((c) => c.dataset.key))];
 
 // moveUsage puts the card at index `to` among those on the page; what the
 // order named that isn't on it now (an account signed out) keeps its place
@@ -12953,6 +13008,14 @@ function planSpan(q) {
   return s;
 }
 
+// panelArranging: the Allowances tab lists its subscriptions to hide and
+// move (panelArrange); panelPeek: the card a menu bar cell asked for, shown
+// though the tab hides it, until the panel is put away or the tab left.
+let panelArranging = false, panelPeek = "";
+if (mode === "panel") document.addEventListener("visibilitychange", () => {
+  if (document.hidden && (panelPeek || panelArranging)) { panelPeek = ""; panelArranging = false; renderPanelQuota(); }
+});
+
 // The tray panel is four tabs over the one page: the agents, the allowances
 // of every subscription and key (the "usage" tab, as it was named before),
 // what the requests add up to (the "stats" tab, the window's Requests made
@@ -12998,6 +13061,7 @@ function setPanelTab(tab) {
   const b = tabs.querySelector(`[data-ptab="${tab}"]`);
   if (!b || b.hidden) tab = "agents";
   closeProfiles();
+  if (tab !== "usage") panelPeek = "";
   panelTab = tab;
   try { localStorage.setItem("magpie.panelTab", tab); } catch {}
   document.body.dataset.ptab = tab;
@@ -13086,7 +13150,11 @@ function panelQuotaFocus(id) {
   if (mode !== "panel") return;
   quotaFocus = id;
   quotaFocusUntil = performance.now() + 5000;
+  // a cell for a subscription the tab hides shows its card all the same
+  panelPeek = id;
+  panelArranging = false;
   setPanelTab("usage");
+  renderPanelQuota();
   requestAnimationFrame(focusQuotaCard);
 }
 
@@ -13321,9 +13389,12 @@ function renderPanelQuota() {
   }
   if (none && panelTab === "usage") setPanelTab("agents");
   box.hidden = none;
+  // a row held in the arranging: drawn when it's let go
+  if (usageArranging && box.querySelector(".pq-arow")) { usageRenderPending = true; return; }
+  const view = box.closest(".view"), keep = view?.scrollTop;
   const restoreFlash = keepQuotaFlash(box);
   box.replaceChildren();
-  if (none) { quotaFocus = ""; fit(); return; }
+  if (none) { quotaFocus = ""; panelArranging = false; fit(); return; }
   if (!quotas) {
     for (let i = 0; i < 2; i++) {
       const card = el("div", "pq-card");
@@ -13333,9 +13404,21 @@ function renderPanelQuota() {
     fit();
     return;
   }
+  if (panelArranging) {
+    box.append(panelArrange(subs));
+    if (view && view.scrollTop !== keep) view.scrollTop = keep;
+    fit();
+    return;
+  }
+  // what the arranging hid is left out, but for the one a menu bar cell
+  // was clicked for
+  const hidden = new Set(state.settings?.panelUsageHidden || []);
+  const peek = (q) => !!panelPeek && (trayCardID(q) === panelPeek || q.provider === panelPeek);
+  const away = new Set(subs.filter((q) => hidden.has(q.provider) && !peek(q)).map((q) => q.provider));
   const groups = new Map();
   const bals = [];
   for (const q of subs) {
+    if (away.has(q.provider)) continue;
     // a balance with windows (Command Code's credits beside its 5-hour and
     // weekly windows) is the windows' card; a balance alone, a figure
     if (q.balance && !q.windows?.length) { bals.push(q); continue; }
@@ -13412,10 +13495,95 @@ function renderPanelQuota() {
     g.append(grid);
     box.append(g);
   }
+  // the way to hide some and move them, and how many are hidden
+  const foot = el("div", "pq-foot");
+  const arrange = el("button", "pq-more pq-arrange", t("Arrange"));
+  arrange.type = "button";
+  arrange.title = t("Choose which subscriptions this tab shows, and their order");
+  arrange.onclick = () => { panelArranging = true; panelPeek = ""; renderPanelQuota(); $("#panelQuota .pq-arow .pq-ahandle")?.focus({ preventScroll: true }); };
+  foot.append(arrange);
+  if (away.size) foot.append(el("span", "pq-hidden", t("{n} hidden", { n: away.size })));
+  box.append(foot);
   restoreFlash();
+  if (view && view.scrollTop !== keep && !box.querySelector(".pq-card.flash")) view.scrollTop = keep;
   panelAge();
   fit();
   requestAnimationFrame(focusQuotaCard);
+}
+
+// The Allowances tab's arranging (H20 on Discord): a row a subscription,
+// in the order the Usage page's cards have, its logo the handle to move it
+// (drag, or Alt+arrows) and a pill to hide it from this tab or show it
+// again. Hiding is the panel's alone; routing and the rest still use it.
+function panelArrange(subs) {
+  const g = el("div", "pq-group pq-arranging");
+  const head = el("div", "pq-gh");
+  head.append(el("span", "pq-gn", t("Arrange")));
+  const done = el("button", "pq-mode pq-done", t("Done"));
+  done.type = "button";
+  done.onclick = () => { panelArranging = false; renderPanelQuota(); };
+  head.append(done);
+  g.append(head, el("p", "pq-anote", t("Hiding is for this panel only: routing, the Usage page and the menu bar still use what's hidden. The order is the Usage page's too.")));
+  const hidden = new Set(state.settings?.panelUsageHidden || []);
+  const list = el("div", "pq-alist");
+  const seen = new Set();
+  for (const q of subs) {
+    if (seen.has(q.provider)) continue;
+    seen.add(q.provider);
+    const off = hidden.has(q.provider);
+    const row = el("div", "pq-arow" + (off ? " put-away" : ""));
+    row.dataset.key = q.provider;
+    const h = el("button", "ag-handle pq-ahandle");
+    h.type = "button";
+    h.setAttribute("aria-label", t("Arrange {agent}", { agent: q.name }));
+    h.title = t("Drag to reorder · Alt+arrow keys to move");
+    h.append(icon(q.icon || "generic"));
+    h.onkeydown = (e) => {
+      const step = { ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1 }[e.key];
+      if (!e.altKey || !step) return;
+      e.preventDefault();
+      moveUsage(q.provider, usageKeys().indexOf(q.provider) + step);
+      $(`#panelQuota .pq-arow[data-key="${CSS.escape(q.provider)}"] .pq-ahandle`)?.focus({ preventScroll: true });
+    };
+    h.onpointerdown = (e) => {
+      if (usageArranging) return;
+      usageArranging = dragCards(e, h, row, list, [...list.children], (to) => moveUsage(q.provider, to), () => {
+        usageArranging = false;
+        if (usageRenderPending) { usageRenderPending = false; renderQuotas(); }
+      });
+    };
+    const pill = el("button", "pq-more pq-show", t(off ? "Show" : "Hide"));
+    pill.type = "button";
+    pill.setAttribute("aria-pressed", String(!off));
+    pill.title = t(off ? "Show {name} in this panel" : "Hide {name} from this panel", { name: q.name });
+    pill.onclick = () => hidePanelUsage(q.provider, !off);
+    row.append(h, el("span", "pq-aname", q.name), off ? el("span", "pq-hidden", t("Hidden")) : "", pill);
+    list.append(row);
+  }
+  g.append(list);
+  return g;
+}
+
+// hidePanelUsage hides a subscription from the panel's Allowances tab, or
+// shows it again: drawn at once, put back if the save fails.
+async function hidePanelUsage(key, hide) {
+  const prev = state.settings;
+  const cur = (prev.panelUsageHidden || []).filter((k) => k !== key);
+  const panelHidden = hide ? [...cur, key] : cur;
+  state.settings = { ...prev, panelUsageHidden: panelHidden };
+  const again = () => {
+    renderPanelQuota();
+    $(`#panelQuota .pq-arow[data-key="${CSS.escape(key)}"] .pq-show`)?.focus({ preventScroll: true });
+  };
+  again();
+  try {
+    const s = await api("usage/arrange", { panelHidden });
+    state.settings = { ...state.settings, panelUsageHidden: s.panelUsageHidden || [] };
+  } catch (e) {
+    state.settings = prev;
+    again();
+    status(e.message, "err");
+  }
 }
 
 // asOfText: an allowance standing in for one that couldn't be read just
@@ -16716,11 +16884,110 @@ if (!web) addEventListener("keydown", (e) => {
   openSettings();
 }, true);
 
+// Font discovery is lazy and separate from polling the app's state. Drafts
+// keep the family/style controls usable while the shared save queue drains.
+let fontList = null, fontListError = false, fontFlight = null, fontRevision = 0;
+const fontDrafts = {};
+function fontChoices(s) {
+  return { ...s, ...Object.fromEntries(Object.entries(fontDrafts).map(([k, d]) => [k, d.value])) };
+}
+// The native host notifies both existing webviews after a successful save.
+// The sender finishes its own queued writes; the other page updates now.
+window.receiveFonts = (s) => {
+  if (web || prefsBusy) return;
+  const fonts = { uiFont: s.uiFont || null, codeFont: s.codeFont || null };
+  if (prefs) Object.assign(prefs, fonts);
+  if (state?.settings) Object.assign(state.settings, fonts);
+  window.desktopFonts.apply(fonts);
+  if (prefs && view === "settings") renderFonts(prefs);
+};
+async function loadFonts(refresh = false) {
+  if (web || fontFlight || (fontList !== null && !refresh)) return fontFlight;
+  fontListError = false;
+  fontFlight = api("fonts" + (refresh ? "?refresh=1" : ""))
+    .then((list) => {
+      if (!Array.isArray(list)) throw new Error("invalid font collection");
+      fontList = list;
+      window.desktopFonts.catalogue(list);
+      window.desktopFonts.apply(fontChoices(prefs || window.bootPrefs));
+    })
+    .catch(() => { fontListError = true; })
+    .finally(() => { fontFlight = null; if (prefs) renderFonts(prefs); });
+  if (prefs) renderFonts(prefs);
+  return fontFlight;
+}
+function chooseFont(key, value) {
+  const revision = ++fontRevision;
+  fontDrafts[key] = { value, revision };
+  window.desktopFonts.apply(fontChoices(prefs));
+  renderFonts(prefs);
+  return savePrefs({ ...prefsKeep(prefs), [key]: value }).finally(() => {
+    if (fontDrafts[key]?.revision === revision) delete fontDrafts[key];
+    window.desktopFonts.apply(fontChoices(prefs));
+    renderFonts(prefs);
+  });
+}
+function closestFont(styles, old) {
+  const exact = styles.find((f) => old && f.name === old.name && f.weight === old.weight && f.style === old.style && f.stretch === old.stretch);
+  if (exact) return exact;
+  const matching = styles.find((f) => old && f.weight === old.weight && f.style === old.style && f.stretch === old.stretch);
+  if (matching) return matching;
+  // A new family without that style starts at its nearest regular face.
+  return [...styles].sort((a, b) =>
+    Number(a.style !== "normal") - Number(b.style !== "normal") || Math.abs(a.weight - 400) - Math.abs(b.weight - 400) || Math.abs(a.stretch - 100) - Math.abs(b.stretch - 100))[0];
+}
+function renderFonts(s) {
+  const current = fontChoices(s);
+  for (const [key, id, label] of [["uiFont", "uiFontRow", "Interface font"], ["codeFont", "codeFontRow", "Code font"]]) {
+    const row = $("#" + id);
+    row.hidden = web;
+    if (web) continue;
+    const chosen = current[key], family = fontList?.find((f) => f.name === chosen?.family);
+    const missing = chosen && !window.desktopFonts.available(chosen);
+    const note = row.querySelector(".font-note");
+    note.textContent = fontListError ? t("Couldn't read installed fonts") : fontFlight ? t("Loading…")
+      : missing ? t("Font unavailable; using system default") : fontList?.length === 0 ? t("No installed fonts found") : t("Saved only on this computer");
+    note.classList.toggle("err", fontListError || !!missing);
+    const pill = row.querySelector(".font-family"), style = row.querySelector(".font-style");
+    const paint = (button, text, name) => {
+      button.replaceChildren(el("span", "", text), svg(CHEV, 11, 1.6));
+      button.title = text;
+      button.setAttribute("aria-label", t(label) + ": " + t(name));
+    };
+    paint(pill, chosen?.family || t("System default"), "Font family");
+    paint(style, chosen?.name || t("System default"), "Font style");
+    style.disabled = !family?.styles.length;
+    row.querySelector(".font-preview").textContent = t("Aa 0123 · 中文");
+    pill.onclick = (e) => {
+      e.stopPropagation();
+      if (pill.classList.contains("open")) return closeProtoMenu();
+      const options = [{ v: "", name: t("System default"), note: "", literalName: true },
+        ...(fontList || []).map((f) => ({ v: "family:" + f.name, name: f.name, note: "", literalName: true })),
+        { v: "refresh", name: t("Refresh fonts"), note: fontListError ? t("Couldn't read installed fonts") : "", literalName: true, always: true }];
+      openProtoMenu(pill, options, chosen ? "family:" + chosen.family : "", (v) => {
+        if (v === "refresh") { loadFonts(true); return; }
+        if (!v) { chooseFont(key, null); return; }
+        const next = fontList.find((f) => "family:" + f.name === v);
+        if (next?.styles.length) chooseFont(key, closestFont(next.styles, chosen));
+      }, label, "sess-menu font-menu", "right", false, "Search fonts…");
+    };
+    style.onclick = (e) => {
+      e.stopPropagation();
+      if (style.classList.contains("open")) return closeProtoMenu();
+      const styles = family?.styles || [];
+      openProtoMenu(style, styles.map((f, i) => ({ v: String(i), name: f.name, note: "", literalName: true })),
+        String(styles.findIndex((f) => window.desktopFonts.same(f, chosen))), (i) => chooseFont(key, styles[Number(i)]),
+        "Font style", "sess-menu font-menu", "right");
+    };
+  }
+}
+
 // applyPrefs paints and speaks as the saved settings say, costs at the
 // exchange rate given (rate, /api/state's fx) or the settings' own. A
 // ?theme= or ?locale= in the URL wins, so a forced look stays forced.
 function applyPrefs(s, rate) {
   s = s || {};
+  if (!prefsBusy) window.desktopFonts?.apply(s);
   const root = document.documentElement;
   if (!params.get("theme")) {
     const want = !s.theme || s.theme === "system" ? undefined : s.theme;
@@ -16782,6 +17049,7 @@ function renderBarIcon() {
 
 async function loadSettings() {
   const since = prefsWrites;
+  if (!web && fontList === null && !fontListError) loadFonts();
   if (window.bootPrefs?.omarchy && !barIcon) api("omarchy/widget").then((b) => { barIcon = b; renderBarIcon(); }).catch(() => {});
   const s = await api("settings");
   if (!prefsSettled(since) && prefs) return; // the save draws the page when it's in
@@ -17055,6 +17323,7 @@ function renderSettings() {
   const s = prefs;
   const keep = prefsKeep(s);
   prefsBase = keep;
+  renderFonts(s);
   $("#themeSegs").replaceChildren(segs(THEMES.map(([id, name]) => [id, t(name)]), s.theme, (theme) => savePrefs({ ...keep, theme })));
   $("#langSegs").replaceChildren(segs(LOCALES.map(([id, name]) => [id, t(name)]), s.lang, (lang) => savePrefs({ ...keep, lang })));
   renderGatewayMode(s);
@@ -18820,6 +19089,7 @@ function wbCheckinLine(r) {
 function prefsKeep(s) {
   return { theme: s.theme, lang: s.lang, tray: s.tray, dock: !!s.dock, dockWindow: !!s.dockWindow, lightweight: !!s.lightweight, keepAwake: !!s.keepAwake, keepAwakeDisplay: !!s.keepAwakeDisplay, proxy: s.proxy || "",
     sessionTerminal: s.sessionTerminal || "",
+    uiFont: s.uiFont || null, codeFont: s.codeFont || null,
     otel: s.otel || {},
     trayUsages: s.trayUsages || [],
     redact: !!s.redact, redactPersonal: !!s.redactPersonal, redactWords: s.redactWords || [], codexWarmup: s.codexWarmup || "",

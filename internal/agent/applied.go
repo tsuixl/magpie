@@ -113,12 +113,18 @@ type Drift struct {
 	//   "replaced" a magpie model magpie set was replaced by the agent's own;
 	//   "bypassed" the config is right, yet the agent was used since and
 	//              nothing of it reached the gateway — it runs on an old
-	//              config, or something outside the file overrides it.
+	//              config, or something outside the file overrides it;
+	//   "unreachable" the config is right, but the address off loopback
+	//              it names the gateway at doesn't answer (#1013).
 	Kind   string `json:"kind"`
 	Field  string `json:"field"`         // the field it shows on
 	Now    string `json:"now,omitempty"` // what that field says now
 	Want   string `json:"want"`          // what setting it again sets
 	Detail string `json:"detail"`        // what exactly is off, for a tooltip
+	// Addr is where an unreachable agent is pointed; Move, when set, the
+	// address WSL reaches Windows at now, which Reapply points it at.
+	Addr string `json:"addr,omitempty"`
+	Move string `json:"move,omitempty"`
 }
 
 // started is when this process — and the gateway in it — came up: before
@@ -167,6 +173,11 @@ func (a *Agent) Drift() *Drift {
 		}
 		return &Drift{Kind: "replaced", Field: f.Key, Now: vals[f.Key], Want: want,
 			Detail: a.Name + "'s config was changed outside magpie: " + f.Label + " is " + orDefault(vals[f.Key]) + ", not " + want + " as magpie set it"}
+	}
+	if onMagpie || joined {
+		if d := a.unreachable(on, vals[on.Key]); d != nil {
+			return d
+		}
 	}
 	if a.Reached != nil && onMagpie {
 		if at, to, refused := a.Reached(rec.At); !at.IsZero() {
@@ -306,6 +317,9 @@ func (a *Agent) Reapply() error {
 		return a.Native.Connect()
 	}
 	d := a.Drift()
+	if d != nil && d.Kind == "unreachable" && d.Move != "" && a.move != nil {
+		return a.move(d.Addr, d.Move)
+	}
 	if d != nil && d.Kind == "replaced" {
 		rec := appliedOf(a.ID)
 		// the model first: the others (an effort) are checked against it

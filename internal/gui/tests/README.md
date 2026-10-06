@@ -1,5 +1,29 @@
 # Dropdown browser regression
 
+## Installed desktop fonts
+
+`fonts.test.cjs` exercises the interface/code font controls with installed
+family/style fixtures: independent traits, literal names, search and keyboard
+selection, rapid queued saves and rollback, reload, unavailable faces,
+discovery failure and refresh, empty collections, platform fallback,
+Omarchy precedence and browser-mode isolation. It checks narrow windows and
+no scroll on click in Chromium and WebKit, in English and Chinese.
+`ARTIFACT_DIR` retains screenshots; `MAGPIE_FONT_ASSETS` can point to an older
+asset directory to verify that the test fails on the missing picker.
+`font-cascade.test.cjs` checks that a reset restores the original weights
+under bold parents, while explicit component emphasis survives a choice.
+
+```sh
+node --test internal/gui/tests/fonts.test.cjs internal/gui/tests/font-cascade.test.cjs internal/gui/tests/win-fonts.test.cjs
+go test -v ./internal/fonts
+go test -tags nogui ./internal/settings ./internal/gui -run '^TestFont'
+```
+
+The native test reads the operating system's actual installed font metadata.
+Run `go test -v ./internal/fonts` without `nogui` on each desktop platform.
+Browser fixtures never read or write user settings, install fonts or contact
+a live gateway.
+
 ## Gateway Caller Keys
 
 `gateway-caller-keys.test.cjs` checks the named caller-key list on the
@@ -170,6 +194,17 @@ Set `ARTIFACT_DIR` to retain screenshots.
 
 ```sh
 node --test internal/gui/tests/agent-disconnect-preview.test.cjs
+```
+
+`agent-unreachable.test.cjs` checks an agent whose config is right but whose
+address doesn't answer (#1013): its line says so in red with the advice as
+its tooltip, its pill is "How to fix", which opens the advice in a dialog and
+sets nothing, and when WSL reaches Windows at another address now the pill is
+"Use <address>" and posts the reapply. The window at 560px and the tray panel
+at 440px, in English, Chinese, Japanese and German on Chromium and WebKit.
+
+```sh
+node --test internal/gui/tests/agent-unreachable.test.cjs
 ```
 
 `agent-layout.test.cjs` keeps the main window's agent names readable at 520,
@@ -575,6 +610,18 @@ disables panel-header dragging,
 and cancels navigation after five seconds or a purposeful user scroll.
 It runs in English and Chinese on Chromium and WebKit, with a mocked API. Run with
 `node --test internal/gui/tests/tray-cell-click.test.cjs`.
+
+`panel-arrange.test.cjs` opens the tray panel's Allowances tab at 440px with a
+subscription hidden in the settings: it has no card and the foot says one is
+hidden. *Arrange* keeps the page where the reader scrolled it and lists a row
+a subscription in the shared order, with the note that hiding is the panel's
+only; the grip by a logo shows on hover only, and no row has a left stripe or
+runs off sideways. *Show* and *Hide* post `panelHidden` without moving the
+page, a failed save is put back, Alt+arrow and a drag by the logo post the
+`order`, and *Done* draws the cards in it. A menu bar cell for a hidden
+subscription still opens its card until the panel is put away, and the Usage
+page keeps the hidden card in the same order. It runs in English, Chinese,
+Japanese and German on Chromium and WebKit, with a mocked API.
 
 `TestTrayCellClickReleasedPanel` (darwin, cgo, GUI) runs a separate AppKit
 process with an isolated config and a minimal page: a quota click recreates

@@ -1648,7 +1648,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// and once the agent has the stream's headers from an earlier try's
 		// keepalives, for a failure to be told as the stream's error
 		hw := newHoldWriter(w, !last || again < max(lastRetries, rateRetries) || other != nil || kept.sent || autoPicks(c) && repicked < 2)
-		hw.thinkingShown = !refusesAfterThinking(c.model)
+		// Claude's and GPT's reasoning is held for a refusal after it only
+		// while another candidate could answer instead: the last one's
+		// refusal isn't asked again, so holding it only kept a lone relay's
+		// thinking from Claude Code and Codex until the text began, all at
+		// once (iTianbao on X). Gemini's stays held on the last one too,
+		// for a reply that only reasoned to be asked again (#667).
+		hw.thinkingShown = !refusesAfterThinking(c.model) || last && modelFamily(c.model) != ""
 		hw.ctx, hw.alive, hw.streams = r.Context(), kept, streams
 		if isGroup && g.FirstToken > 0 && !last && streams {
 			// slow to start, the next member is asked (Group.FirstToken)

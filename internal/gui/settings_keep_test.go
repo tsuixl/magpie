@@ -136,6 +136,7 @@ func TestSettingsSaveKeepsWhatItDoesNotSend(t *testing.T) {
 		RequestArchiveMaxMB: 64,
 		QuotaLeft:           true,
 		UsageOrder:          []string{"kimi", "codex"},
+		PanelUsageHidden:    []string{"deepseek"},
 		PlainNames:          true,
 		PlainOwnNames:       true,
 		CodexAgentsV1:       true,

@@ -654,7 +654,7 @@ func codexIn(at place) *Agent {
 		return settle()
 	}
 
-	return atomic(&Agent{
+	a := atomic(&Agent{
 		ID: "codex", Name: "Codex", Icon: "codex-color", Bin: "codex", Dir: dir, Path: path,
 		UA: []string{"codex"},
 		// Codex as it was before magpie: its default puts it back as
@@ -1010,6 +1010,13 @@ func codexIn(at place) *Agent {
 			},
 		},
 	}, path, catalogPath)
+	// this machine's Codex: the address its config keeps is tried (Drift),
+	// and moved to WSL's new one when that changed (#1013)
+	if at.spell == nil {
+		a.reach = at.base
+		a.move = func(from, to string) error { return codexMoveGateway(path, from, to) }
+	}
+	return a
 }
 
 // ccSwitchProvider matches the ids of the provider tables CC Switch writes
@@ -1181,6 +1188,22 @@ func codexKeptGateway(path string) string {
 		return table
 	}
 	return cmp.Or(kept(base, gateway.CodexPath), table, gateway.URL())
+}
+
+// codexMoveGateway points Codex's config at to where it names magpie's
+// gateway at from: openai_base_url and [model_providers.magpie]'s
+// base_url, each only when it is at from; anything else is the user's.
+func codexMoveGateway(path, from, to string) error {
+	from, to = strings.TrimSuffix(from, "/"), strings.TrimSuffix(to, "/")
+	if u, _ := edit.GetTOMLTop(path, "openai_base_url"); strings.HasPrefix(u, from+"/") {
+		if err := edit.SetTOMLTop(path, edit.KV{Path: "openai_base_url", Value: to + strings.TrimPrefix(u, from)}); err != nil {
+			return err
+		}
+	}
+	if t, _ := edit.GetTOMLTable(path, "model_providers."+magpieID); ourKey(t["experimental_bearer_token"]) && strings.HasPrefix(t["base_url"], from+"/") {
+		return edit.SetTOMLKey(path, "model_providers."+magpieID, "base_url", to+strings.TrimPrefix(t["base_url"], from))
+	}
+	return nil
 }
 
 // isCodexGatewayOn reports whether an openai_base_url is magpie's gateway

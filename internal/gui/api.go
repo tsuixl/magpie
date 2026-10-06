@@ -32,6 +32,7 @@ import (
 	"github.com/yetone/magpie/internal/autostart"
 	"github.com/yetone/magpie/internal/catalog"
 	"github.com/yetone/magpie/internal/filememo"
+	"github.com/yetone/magpie/internal/fonts"
 	"github.com/yetone/magpie/internal/fx"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/library"
@@ -646,6 +647,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// and the text size, which the Mac's header measures against the
 		// traffic lights
 		boot := map[string]any{"lang": s.Lang, "theme": s.Theme, "textSize": s.TextSize, "web": isWeb(w)}
+		if !isWeb(w) {
+			boot["uiFont"], boot["codeFont"] = s.UIFont, s.CodeFont
+		}
 		// and whether it is a gateway's page alone (gatewaymode.go), so the
 		// pages left out never show
 		if on, _ := gatewayMode(isWeb(w)); on {
@@ -670,6 +674,7 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		writeJSON(rw, nil)
 	})
 	omarchyRoutes(mux, w)
+	fontRoutes(mux, isWeb(w) || !fonts.Available, fonts.List)
 	mux.HandleFunc("GET /api/state", func(rw http.ResponseWriter, r *http.Request) {
 		// the panel and its model picker load from here: an account still
 		// without its vendor's list (one whose try at start-up failed) is
@@ -948,14 +953,29 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		writeJSON(rw, settingsState())
 	})
 	mux.HandleFunc("POST /api/settings", func(rw http.ResponseWriter, r *http.Request) {
+		var body json.RawMessage
 		var in settings.Settings
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
 			fail(rw, err)
 			return
 		}
 		// the Settings page sends its own choices; how the agents are
 		// arranged is the Agents page's, and the window's size its own; both stay as they are
 		cur := settings.Load()
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(body, &fields)
+		// Older pages do not send fonts. An explicit null restores the
+		// default, while an omitted field (or a browser save) preserves it.
+		if _, sent := fields["uiFont"]; !sent || isWeb(w) {
+			in.UIFont = cur.UIFont
+		}
+		if _, sent := fields["codeFont"]; !sent || isWeb(w) {
+			in.CodeFont = cur.CodeFont
+		}
 		in.AgentOrder, in.AgentsHidden, in.AgentsShown = cur.AgentOrder, cur.AgentsHidden, cur.AgentsShown
 		in.Window, in.WindowMaximised = cur.Window, cur.WindowMaximised // the window's own, as it was last resized
 		// and what other pages keep here: which models an agent is shown, and
@@ -981,6 +1001,8 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// used or left is the Usage page's toggle as much as Settings', set on its own
 		in.QuotaLeft = cur.QuotaLeft
 		in.UsageOrder = cur.UsageOrder // the Usage page's, dragged there
+		// and what the tray panel's Allowances tab leaves out, set there
+		in.PanelUsageHidden = cur.PanelUsageHidden
 		// how agents' lists name models, set on its own for the agents to be told
 		in.PlainNames, in.PlainOwnNames = cur.PlainNames, cur.PlainOwnNames
 		in.CodexAgentsV1 = cur.CodexAgentsV1
@@ -1027,6 +1049,9 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		if err := settings.Save(in); err != nil {
 			fail(rw, err)
 			return
+		}
+		if onFonts != nil && (!sameFont(in.UIFont, cur.UIFont) || !sameFont(in.CodeFont, cur.CodeFont)) {
+			onFonts()
 		}
 		// whether agents are told every model takes images follows Vision
 		// (provider.Described)
@@ -1383,15 +1408,25 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		}
 		writeJSON(rw, settingsState())
 	})
-	// the Usage page's order of its cards, in magpie's settings
+	// the Usage page's order of its cards, which the tray panel's Allowances
+	// tab follows, and what that tab leaves out, in magpie's settings; one
+	// not sent stays as it is
 	mux.HandleFunc("POST /api/usage/arrange", func(rw http.ResponseWriter, r *http.Request) {
-		var in struct{ Order []string }
+		var in struct {
+			Order       *[]string
+			PanelHidden *[]string
+		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(rw, err)
 			return
 		}
 		s := settings.Load()
-		s.UsageOrder = in.Order
+		if in.Order != nil {
+			s.UsageOrder = *in.Order
+		}
+		if in.PanelHidden != nil {
+			s.PanelUsageHidden = *in.PanelHidden
+		}
 		if err := settings.Save(s); err != nil {
 			fail(rw, err)
 			return
