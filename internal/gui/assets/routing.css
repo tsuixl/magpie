@@ -103,7 +103,8 @@
 .rt-steps li.why { color: var(--fg); }
 .rt-steps li.why::before { background: var(--fg); }
 .rt-steps li.aside { color: var(--muted); }
-.rt-steps li.said { font-family: var(--code-font, var(--code)); font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); font-size: 11.5px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.rt-steps li.said { font-family: var(--code-font, var(--code)); font-size: 11.5px; overflow-wrap: anywhere; white-space: pre-wrap; }
+:where(html[data-fonts]) .rt-steps li.said { font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); }
 .rt-stats > span.rt-errs:not([aria-disabled="true"]) { cursor: pointer; }
 .rt-stats > span.rt-errs:not([aria-disabled="true"]):hover b { color: var(--red); }
 .rt-steps li.aside::before { background: none; border: 1px solid var(--muted); width: 4px; height: 4px; }

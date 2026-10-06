@@ -51,7 +51,8 @@ body.window .lib-head { top: -2px; margin: -2px -16px 0; padding: 8px 16px 4px; 
   display: block; width: 100%; box-sizing: border-box; resize: none; border: 0; outline: none; background: none; color: var(--fg);
   padding: 10px 14px 14px; font: var(--code-style, normal) var(--code-weight, 400) 12.5px/1.6 var(--code-font, var(--code)); font-stretch: var(--code-stretch, 100%); tab-size: 2; min-height: 150px;
 }
-.lib-text::placeholder { color: var(--faint); font-family: var(--ui-font, var(--font)); font-style: var(--ui-style, inherit); font-weight: var(--ui-weight, inherit); font-stretch: var(--ui-stretch, 100%); font-size: 12.5px; }
+.lib-text::placeholder { color: var(--faint); font-family: var(--ui-font, var(--font)); font-size: 12.5px; }
+:where(html[data-fonts]) .lib-text::placeholder { font-style: var(--ui-style, inherit); font-weight: var(--ui-weight, inherit); font-stretch: var(--ui-stretch, 100%); }
 .lib-text.small { min-height: 64px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--card); transition: border-color .12s, box-shadow .12s; }
 .lib-text.small:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 
@@ -302,10 +303,12 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 .lib-editor .ehead .note { font-size: 11.5px; color: var(--faint); margin-left: auto; }
 .lib-editor .lib-slot { display: contents; }
 .lib-editor .lib-grid { display: contents; }
-.lib-editor input.mono { font-family: var(--code-font, var(--code)); font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); font-size: 12px; }
+.lib-editor input.mono { font-family: var(--code-font, var(--code)); font-size: 12px; }
+:where(html[data-fonts]) .lib-editor input.mono { font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); }
 .lib-pairs { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .lib-pair { display: flex; gap: 6px; width: 100%; align-items: center; }
-.lib-pair input { flex: 1; min-width: 0; font-family: var(--code-font, var(--code)); font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); font-size: 12px; }
+.lib-pair input { flex: 1; min-width: 0; font-family: var(--code-font, var(--code)); font-size: 12px; }
+:where(html[data-fonts]) .lib-pair input { font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); }
 .lib-pair input:first-child { flex: .8; }
 .lib-x { width: 24px; height: 24px; padding: 0; display: inline-grid; place-items: center; flex: none; }
 .lib-addpair { padding-left: 0; }
@@ -384,7 +387,8 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 .mk-name.big { font-size: 15px; }
 .mk-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 11px; color: var(--muted); }
 .mk-pub { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mk-badge { flex: none; display: inline-flex; align-items: center; gap: 3px; height: 17px; padding: 0 6px; border-radius: 5px; background: var(--pill); color: var(--fg-2); font-size: 10.5px; font-family: var(--code-font, var(--code)); font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); }
+.mk-badge { flex: none; display: inline-flex; align-items: center; gap: 3px; height: 17px; padding: 0 6px; border-radius: 5px; background: var(--pill); color: var(--fg-2); font-size: 10.5px; font-family: var(--code-font, var(--code)); }
+:where(html[data-fonts]) .mk-badge { font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); }
 .mk-badge.mk-needs { width: 17px; padding: 0; justify-content: center; }
 .mk-official { flex: none; display: inline-grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: var(--fg); color: var(--card); }
 .mk-desc { margin: 0; min-height: 2.9em; font-size: 12px; line-height: 1.45; color: var(--fg-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -409,7 +413,8 @@ input.lib-setname:focus { border-color: var(--accent); box-shadow: 0 0 0 3px col
 .mk-sheet .mk-hint { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; margin: 0; font-size: 11.5px; color: var(--muted); }
 .mk-ext { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); text-decoration: none; padding: 3px 6px; border-radius: 6px; }
 .mk-ext:hover { color: var(--fg); background: var(--pill); }
-.mk-sheet .mk-hint .mk-ext { padding: 0; font-family: var(--code-font, var(--code)); font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); font-size: 11.5px; }
+.mk-sheet .mk-hint .mk-ext { padding: 0; font-family: var(--code-font, var(--code)); font-size: 11.5px; }
+:where(html[data-fonts]) .mk-sheet .mk-hint .mk-ext { font-style: var(--code-style, inherit); font-weight: var(--code-weight, inherit); font-stretch: var(--code-stretch, 100%); }
 .mk-sheet .mk-hint .mk-ext:hover { background: none; text-decoration: underline; text-underline-offset: 2px; }
 .mk-sheet .bar .mk-id { margin-left: 2px; }
 .lib-rtk-gain { margin: 6px 12px 10px; font-size: 12px; line-height: 1.5; color: var(--muted); }

@@ -10,9 +10,11 @@ Omarchy precedence and browser-mode isolation. It checks narrow windows and
 no scroll on click in Chromium and WebKit, in English and Chinese.
 `ARTIFACT_DIR` retains screenshots; `MAGPIE_FONT_ASSETS` can point to an older
 asset directory to verify that the test fails on the missing picker.
+`font-cascade.test.cjs` checks that a reset restores the original weights
+under bold parents, while explicit component emphasis survives a choice.
 
 ```sh
-node --test internal/gui/tests/fonts.test.cjs internal/gui/tests/win-fonts.test.cjs
+node --test internal/gui/tests/fonts.test.cjs internal/gui/tests/font-cascade.test.cjs internal/gui/tests/win-fonts.test.cjs
 go test -v ./internal/fonts
 go test -tags nogui ./internal/settings ./internal/gui -run '^TestFont'
 ```
