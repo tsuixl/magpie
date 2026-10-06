@@ -959,6 +959,51 @@ func codexInput(body []byte, magpieModel bool) (_ []byte, compact bool) {
 	return nb, compact
 }
 
+// withoutBareReasoning is a Responses request without the reasoning items
+// that have nothing sealed in them, where store isn't true: an id and a
+// summary only, as magpie gives Codex in a translated reply (rs_ and
+// newID). OpenAI's API and Azure OpenAI's look such an item up among the
+// items they stored, and with store false they stored none, so the whole
+// request goes back 400 "Item with id 'rs_…' not found" (#1008); its
+// summary was the model's notes to itself, which no model reads back.
+func withoutBareReasoning(body []byte) []byte {
+	if !bytes.Contains(body, []byte(`"reasoning"`)) {
+		return body
+	}
+	var q map[string]json.RawMessage
+	if json.Unmarshal(body, &q) != nil {
+		return body
+	}
+	var store bool
+	if json.Unmarshal(q["store"], &store) == nil && store {
+		return body
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(q["input"], &items) != nil {
+		return body
+	}
+	kept := items[:0:0]
+	for _, it := range items {
+		var t struct {
+			Type string `json:"type"`
+			Enc  string `json:"encrypted_content"`
+		}
+		if json.Unmarshal(it, &t) == nil && t.Type == "reasoning" && t.Enc == "" {
+			continue
+		}
+		kept = append(kept, it)
+	}
+	if len(kept) == len(items) {
+		return body
+	}
+	q["input"], _ = json.Marshal(kept)
+	b, err := json.Marshal(q)
+	if err != nil {
+		return body
+	}
+	return b
+}
+
 // openaiItemPrefix is the id prefix OpenAI takes for each kind of call item
 // a vendor's reply may have handed Codex with another: magpie, or the
 // vendor, gave a tool search's and a custom tool's call a function_call's
@@ -1155,24 +1200,25 @@ func userMessage(text string) map[string]any {
 //
 // A provider that answers the summary 404 — a relay that serves the
 // conversation turn by turn but not the summary of it, "Upstream request
-// failed" (#866) — is asked once more with the conversation as plain text,
-// none of its items' ids or sealed reasoning in it; when that fails too the
-// summary is magpie's own, the conversation's user messages and last reply,
+// failed" (#866) — or 400 for an item of it it doesn't have (#1008) is
+// asked once more with the conversation as plain text, none of its items'
+// ids or sealed reasoning in it; when that fails too the summary is
+// magpie's own, the conversation's user messages and last reply,
 // so the compaction still completes and Codex goes on. Any other failure
 // (401, 429, 500) goes back to Codex as it came.
 func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byte) {
 	rec := &recorder{header: http.Header{}, status: 200}
 	s.serve(rec, r, provider.Responses, body)
 	local := ""
-	if rec.status == http.StatusNotFound {
+	if first := rec.status; first == http.StatusNotFound || itemNotFound(rec) {
 		who, msg := compactFailure(body, rec)
-		log.Printf("codex compaction: %s answered 404 (%s); asking again with the conversation as text", who, msg)
+		log.Printf("codex compaction: %s answered %d (%s); asking again with the conversation as text", who, first, msg)
 		rec = &recorder{header: http.Header{}, status: 200}
 		s.serve(rec, r, provider.Responses, plainCompact(body))
 		if rec.status >= 400 {
 			_, again := compactFailure(body, rec)
 			log.Printf("codex compaction: %s answered %d again (%s); compacting locally", who, rec.status, again)
-			local = localSummary(body, who+" answered 404 to the summary request: "+msg)
+			local = localSummary(body, fmt.Sprintf("%s answered %d to the summary request: %s", who, first, msg))
 			rec = &recorder{header: http.Header{}, status: 200}
 		}
 	}
@@ -1233,6 +1279,14 @@ func (s *Server) codexCompact(w http.ResponseWriter, r *http.Request, body []byt
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// itemNotFound is a 400 refusing an item of the input by its id, as Azure
+// OpenAI's and OpenAI's API answer one they never stored ("Item with id
+// 'rs_…' not found", #1008), which a relay in front of them passes on.
+func itemNotFound(rec *recorder) bool {
+	b := rec.body.Bytes()
+	return rec.status == http.StatusBadRequest && unreadableItem.Match(b) && bytes.Contains(bytes.ToLower(b), []byte("not found"))
 }
 
 // compactFailure names who answered a summary request with a failure — the

@@ -327,6 +327,11 @@ type Settings struct {
 	// or a group's) taken out of an agent's lists one by one, by agent id,
 	// after Visible: a model not named here, a new one among them, is shown.
 	HiddenModels map[string][]string `json:"hiddenModels,omitempty"`
+	// AgentEfforts are the reasoning efforts the gateway asks for on an
+	// agent's requests, by agent id, for an agent whose own config can't
+	// carry one (Cursor Private Inference, #1003): one of the levels in
+	// provider.MemberEfforts.
+	AgentEfforts map[string]string `json:"agentEfforts,omitempty"`
 	// OrderedModels is the order an agent's lists put its models in, by
 	// agent id and then entry id, as the user dragged them on the Agents
 	// page (Codex's, #855): the ones named first, any other after them.

@@ -1037,6 +1037,21 @@ func (p Provider) MessagesFirst(model string) bool {
 	return p.Anthropic != "" && claudeModel(model)
 }
 
+// OnMessages: a Claude model MessagesFirst asks on Messages whatever API
+// the client spoke, not only when the client's isn't served — unless the
+// user set the API it is asked on, or the vendor's list names the APIs it
+// serves it on (Copilot's Claude on Chat and Messages), where a request is
+// relayed on the client's own API as before.
+func (p Provider) OnMessages(model string) bool {
+	if !p.MessagesFirst(model) {
+		return false
+	}
+	if _, ok := p.ModelAPI(model); ok {
+		return false
+	}
+	return p.ListedAPIs(model) == nil
+}
+
 // claudeModel is whether model is one of Anthropic's Claude models by its
 // name, after any vendor prefix (anthropic/claude-sonnet-4.5) or as
 // Bedrock names it.
