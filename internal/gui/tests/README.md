@@ -19,9 +19,10 @@ go test -v ./internal/fonts
 go test -tags nogui ./internal/settings ./internal/gui -run '^TestFont'
 ```
 
-The native test reads the operating system's actual installed font metadata;
-it runs on Windows, macOS and Linux in CI. Browser fixtures never read or
-write user settings, install fonts or contact a live gateway.
+The native test reads the operating system's actual installed font metadata.
+Run `go test -v ./internal/fonts` without `nogui` on each desktop platform.
+Browser fixtures never read or write user settings, install fonts or contact
+a live gateway.
 
 ## Gateway Caller Keys
 

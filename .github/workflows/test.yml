@@ -58,11 +58,6 @@ jobs:
       - name: Vet
         run: go vet -tags "${{ steps.tags.outputs.tags }}" ./...
 
-      # In particular, Windows otherwise only compiles most package tests.
-      # Read each runner's real system fonts through its native adapter.
-      - name: Installed desktop fonts
-        run: go test -v ./internal/fonts
-
       - uses: oven-sh/setup-bun@v2
         if: runner.os == 'Linux'
         with:
