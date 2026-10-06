@@ -28,6 +28,8 @@ The `movers` map assembled in `internal/provider/migrate*.go` is the authoritati
 
 For a moved subscription, its built-in upstream implementation does not run. Plugin accounts use `Account.Agent == "plugin"`; requests reach `plugin.Fetch` through `Provider.Do` and bypass the built-in subscription adapter. Magpie still handles routing, protocol conversion, quota handling, and compatibility adjustments, as well as the plugin host, provider integration, migration code, and GUI plugin paths.
 
+Quota aggregation in [`quotas.go`](../../internal/provider/quotas.go) suppresses a key's GLM Coding Plan card only when its comparable reset windows match a ZCode subscription card: built-in or moved `zcode`, or independently installed `zcode-plugin`. [`PlanQuotas`](../../internal/provider/planquota.go) identifies GLM plans by their quota endpoint, including custom provider ids. Matching reset schedules from unrelated vendors do not hide cards. Within this pair, resets remain a heuristic for the shared account; a plan's `User` is a key label or mask, not a login identity. Errors, conflicting resets, or no comparable resets keep the plan visible. This applies to the Usage page, tray, quota reports, alerts, and quota waits; it does not change plugin ownership or upstream requests.
+
 ## How ownership changes
 
 Migration records use four states:
@@ -68,6 +70,8 @@ The GUI's plugin integration includes `subOf`, `pluginSubs`, and `startPluginSig
 [`migrate_notice_test.go`](../../internal/provider/migrate_notice_test.go) includes `TestMovedBuiltinsSayTheirPlugin`, which checks that moved built-ins tell contributors which plugin serves them. Migration tests live beside [`migrate.go`](../../internal/provider/migrate.go).
 
 Gateway parity tests in [`plugin_parity_test.go`](../../internal/gateway/plugin_parity_test.go) and other `plugin_*_test.go` files compare or exercise plugin paths. A built-in test alone does not establish moved-user behavior. Inspect each test's fixture to confirm that it covers the provider and operation being changed.
+
+[`quotas_dedupe_test.go`](../../internal/provider/quotas_dedupe_test.go) checks unrelated reset collisions and ZCode deduplication, including plugin usage window conversion for both plugin ids. [`TestPlanQuotas`](../../internal/provider/planquota_test.go) checks the custom GLM endpoint, cached cards, and fallback readings restored from disk. These fixtures do not contact the live vendors or run the community ZCode plugin.
 
 Run the relevant package tests with an isolated home directory. Resolve GOPATH and Go's caches before changing HOME, so repeated runs reuse dependencies and downloaded toolchains. The subshell makes temporary files writable and cleans up its home on exit, including when tests fail, and returns the test command's exit status.
 

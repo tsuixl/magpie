@@ -528,8 +528,10 @@ func PlanQuotas(ctx context.Context) []SubscriptionQuota {
 	go func() { stepfun <- stepPlanQuotas(ctx) }()
 	wg.Wait()
 	out := []SubscriptionQuota{}
-	for _, q := range got {
+	for i, q := range got {
 		if q != nil {
+			// Set this after keepReading, which can restore a card from disk.
+			q.glmPlan = strings.HasSuffix(jobs[i].src.url, "/api/monitor/usage/quota/limit")
 			out = append(out, *q)
 		}
 	}

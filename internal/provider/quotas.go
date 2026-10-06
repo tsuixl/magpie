@@ -43,11 +43,15 @@ func notShown(plans, subs []SubscriptionQuota) []SubscriptionQuota {
 	})
 }
 
-// sameAccount reports whether two cards are one account read twice: every
-// window of the same length both say when they start again starts again
-// at the same moment, and there is one such at least — a window's reset
-// is when that account first used it.
+// sameAccount matches a GLM key's plan to ZCode (built-in or plugin) by
+// their account-relative resets. A plan's User is a key label, not the
+// subscription's login, so it cannot identify the shared account. Every
+// comparable window must agree, with at least one match. This heuristic
+// must not compare unrelated vendors whose reset schedules can coincide.
 func sameAccount(a, b SubscriptionQuota) bool {
+	if !a.glmPlan || (b.Provider != "zcode" && b.Provider != "zcode-plugin") {
+		return false
+	}
 	if a.Error != "" || b.Error != "" {
 		return false
 	}

@@ -120,6 +120,9 @@ type SubscriptionQuota struct {
 	// In-process read order, separate from the vendor's ReadAt and never
 	// persisted: restarting starts a new sequence.
 	readSeq uint64
+	// glmPlan marks a key's quota read from the GLM Coding Plan endpoint,
+	// including custom providers. Only these can share ZCode's allowance.
+	glmPlan bool
 }
 
 var subscriptionUsageCache struct {
