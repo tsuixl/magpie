@@ -37,10 +37,7 @@ static double magpieFontWidth(FcPattern *f) { return magpieFontNumber(f, FC_WIDT
 */
 import "C"
 
-import (
-	"errors"
-	"math"
-)
+import "errors"
 
 const Available = true
 
@@ -69,7 +66,7 @@ func installed() ([]Face, error) {
 		faces = append(faces, Face{
 			Family: C.GoString(C.magpieFontFamily(font)),
 			Name:   C.GoString(C.magpieFontStyle(font)),
-			Weight: int(math.Round(float64(C.FcWeightToOpenTypeDouble(weight)))),
+			Weight: float64(C.FcWeightToOpenTypeDouble(weight)),
 			Style:  style, Stretch: float64(C.magpieFontWidth(font)),
 		})
 	}

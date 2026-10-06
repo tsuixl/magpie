@@ -6,12 +6,15 @@
 #include <string.h>
 #include <math.h>
 
-static NSString *fontName(CTFontDescriptorRef descriptor, CFStringRef key) {
-    CFTypeRef value = CTFontDescriptorCopyAttribute(descriptor, key);
+static NSString *fontText(CFTypeRef value) {
     NSString *text = value && CFGetTypeID(value) == CFStringGetTypeID()
         ? [(__bridge NSString *)value copy] : nil;
     if (value) CFRelease(value);
     return [text autorelease];
+}
+
+static NSString *fontName(CTFontDescriptorRef descriptor, CFStringRef key) {
+    return fontText(CTFontDescriptorCopyAttribute(descriptor, key));
 }
 
 static double axis(CFDictionaryRef variation, uint32_t tag, double fallback) {
@@ -52,19 +55,26 @@ char *magpieInstalledFonts(void) {
         const double widths[] = {100, 50, 62.5, 75, 87.5, 100, 112.5, 125, 150, 200};
         for (CFIndex i = 0; i < CFArrayGetCount(descriptors); ++i) {
             CTFontDescriptorRef descriptor = (CTFontDescriptorRef)CFArrayGetValueAtIndex(descriptors, i);
-            NSString *family = fontName(descriptor, kCTFontFamilyNameAttribute);
-            NSString *name = fontName(descriptor, kCTFontStyleNameAttribute);
-            // Dot-prefixed faces are private system UI implementations, not
-            // families the webview can request by name.
-            if (!family.length || !name.length || [family hasPrefix:@"."]) continue;
+            CFTypeRef downloadable = CTFontDescriptorCopyAttribute(descriptor, kCTFontDownloadableAttribute);
             CFTypeRef downloaded = CTFontDescriptorCopyAttribute(descriptor, kCTFontDownloadedAttribute);
-            BOOL remote = downloaded && CFEqual(downloaded, kCFBooleanFalse);
+            // A bundled font was never downloaded either. Only a font
+            // explicitly offered for download can be a remote-only face.
+            BOOL remote = downloadable && CFEqual(downloadable, kCFBooleanTrue)
+                && downloaded && CFEqual(downloaded, kCFBooleanFalse);
+            if (downloadable) CFRelease(downloadable);
             if (downloaded) CFRelease(downloaded);
             if (remote) continue;
             CTFontRef font = CTFontCreateWithFontDescriptor(descriptor, 0, NULL);
             if (!font) continue;
+            NSString *family = fontName(descriptor, kCTFontFamilyNameAttribute);
+            NSString *name = fontName(descriptor, kCTFontStyleNameAttribute);
+            if (!family.length) family = fontText(CTFontCopyFamilyName(font));
+            if (!name.length) name = fontText(CTFontCopyName(font, kCTFontSubFamilyNameKey));
+            // Dot-prefixed faces are private system UI implementations, not
+            // families the webview can request by name.
+            if (!family.length || !name.length || [family hasPrefix:@"."]) { CFRelease(font); continue; }
             CTFontSymbolicTraits traits = CTFontGetSymbolicTraits(font);
-            int weight = traitWeight(font);
+            double weight = traitWeight(font);
             double stretch = traits & kCTFontCondensedTrait ? 75 : traits & kCTFontExpandedTrait ? 125 : 100;
             NSString *slope = traits & kCTFontItalicTrait ? @"italic" : @"normal";
             // OpenType weights are CSS weights; CoreText's floating trait
@@ -82,7 +92,7 @@ char *magpieInstalledFonts(void) {
             }
             // Named variable instances can override the base font's table.
             CFDictionaryRef variation = CTFontCopyVariation(font);
-            weight = (int)axis(variation, 'wght', weight);
+            weight = axis(variation, 'wght', weight);
             stretch = axis(variation, 'wdth', stretch);
             if (axis(variation, 'ital', 0) != 0) slope = @"italic";
             else if (axis(variation, 'slnt', 0) != 0) slope = @"oblique";

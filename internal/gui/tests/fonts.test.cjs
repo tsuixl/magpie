@@ -270,4 +270,23 @@ for (const [engine, runtime] of engines) {
       assert.deepEqual(errors, []);
     } finally { await browser.close(); }
   });
+
+  test(`${engine}: named variable traits retain fractional weight and custom width`, async () => {
+    const browser = await runtime.launch();
+    try {
+      const { page, api, errors } = await open(browser);
+      const book = face("Variable Sans", "Book", 425.5, "normal", 25);
+      api.fonts.push({ name: book.family, styles: [book] });
+      await page.locator("#uiFontRow .font-family").click();
+      await page.getByRole("menuitemradio", { name: "Refresh fonts" }).click();
+      await page.waitForFunction(() => !fontFlight && fontList.some(f => f.name === "Variable Sans"));
+      await family(page, "uiFontRow", book.family);
+      await settled(page);
+      assert.equal(api.cur.uiFont.weight, 425.5);
+      assert.equal(api.cur.uiFont.stretch, 25);
+      assert.equal((await css(page, "body")).weight, "425.5");
+      assert.equal((await css(page, "body")).stretch, "25%");
+      assert.deepEqual(errors, []);
+    } finally { await browser.close(); }
+  });
 }

@@ -16,7 +16,7 @@ import (
 type Face struct {
 	Family  string  `json:"family"`
 	Name    string  `json:"name"`
-	Weight  int     `json:"weight"`
+	Weight  float64 `json:"weight"`
 	Style   string  `json:"style"`
 	Stretch float64 `json:"stretch"`
 }
@@ -37,14 +37,16 @@ func Validate(f *Face) error {
 			return fmt.Errorf("font family and style must be nonempty names without control characters")
 		}
 	}
-	if f.Weight < 1 || f.Weight > 1000 {
+	if math.IsNaN(f.Weight) || math.IsInf(f.Weight, 0) || f.Weight < 1 || f.Weight > 1000 {
 		return fmt.Errorf("font weight must be between 1 and 1000")
 	}
 	if f.Style != "normal" && f.Style != "italic" && f.Style != "oblique" {
 		return fmt.Errorf("font style must be normal, italic or oblique")
 	}
-	if math.IsNaN(f.Stretch) || math.IsInf(f.Stretch, 0) || f.Stretch < 50 || f.Stretch > 200 {
-		return fmt.Errorf("font stretch must be between 50 and 200 percent")
+	// The nine traditional width classes span 50–200%, but named
+	// variable instances can use other nonnegative CSS percentages.
+	if math.IsNaN(f.Stretch) || math.IsInf(f.Stretch, 0) || f.Stretch < 0 {
+		return fmt.Errorf("font stretch must be a finite nonnegative percentage")
 	}
 	return nil
 }

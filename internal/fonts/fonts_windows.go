@@ -77,7 +77,7 @@ func familyFaces(family *dwrite) []Face {
 			case 2:
 				style = "italic"
 			}
-			faces = append(faces, Face{Family: name, Name: fontString(font, 8), Weight: int(font.call(4)), Style: style, Stretch: width(int(font.call(5)))})
+			faces = append(faces, Face{Family: name, Name: fontString(font, 8), Weight: float64(font.call(4)), Style: style, Stretch: width(int(font.call(5)))})
 		}
 		font.release()
 	}

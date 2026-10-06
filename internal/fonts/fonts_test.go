@@ -1,6 +1,7 @@
 package fonts
 
 import (
+	"math"
 	"reflect"
 	"testing"
 )
@@ -33,12 +34,26 @@ func TestValidateChoice(t *testing.T) {
 	for _, change := range []func(*Face){
 		func(f *Face) { f.Family = "" }, func(f *Face) { f.Name = "\x00" },
 		func(f *Face) { f.Weight = 0 }, func(f *Face) { f.Weight = 1001 },
-		func(f *Face) { f.Style = "bold" }, func(f *Face) { f.Stretch = 201 },
+		func(f *Face) { f.Style = "bold" }, func(f *Face) { f.Stretch = -1 },
+		func(f *Face) { f.Weight = math.NaN() }, func(f *Face) { f.Stretch = math.Inf(1) },
 	} {
 		bad := f
 		change(&bad)
 		if Validate(&bad) == nil {
 			t.Fatalf("accepted invalid font %#v", bad)
+		}
+	}
+}
+
+func TestVariableTraitsKeepCSSPrecision(t *testing.T) {
+	for _, width := range []float64{0, 25, 87.5, 250} {
+		f := Face{Family: "Variable Sans", Name: "Book", Weight: 425.5, Style: "normal", Stretch: width}
+		if err := Validate(&f); err != nil {
+			t.Fatal(err)
+		}
+		got := group([]Face{f})
+		if len(got) != 1 || len(got[0].Styles) != 1 || got[0].Styles[0] != f {
+			t.Fatalf("lost variable traits: %#v", got)
 		}
 	}
 }
