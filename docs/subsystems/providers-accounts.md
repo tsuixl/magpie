@@ -113,6 +113,13 @@ A signed-in account's model list exists only at its vendor (Cursor's `cursor-age
 3. **Sign.** For each try, `Sign` gives the request its auth. A token about to expire is refreshed first, and the rotated tokens go back to their one holder: the agent's store, or `logins.json` for an account standing behind it.
 4. **Allowance.** Usage endpoints are rate limited, so `SubscriptionUsage` caches its results: a cached copy comes back at once and a stale one is refreshed in the background. When an account's windows start again, `OnRenewed` tells the gateway so a resting account can come back: a Codex reset spent (`renewedNow`), or a reading routing takes (`Allowances`, as the agent the account's usage is read under, `claude` or `plugin:<id>`) that finds the account full till sooner than the last did (`renewedFrom`, the rule a key's reading goes by): the whole account, or a pool of some models with the whole account's windows over it. A window used below `SpentShareOf` its routing, or whose reset passed, is full no more; one full with its reset not known is full for good. A Claude account is back as soon as a new `/usage` or the reset passing shows the window it was out of started again, not when the time Claude Code's refusal named comes; its five hours started again in a week used up tells nothing. A first reading, a failed one, one read alike, or one leaving the full window out tells nothing, and a reset spent is told once, by `renewedNow`. A key's reading that finds a window it was full in (at `SpentShareOf` its routing) full no more, or full till sooner, tells it too, as agent `""` and the key's `KeyAllowanceID`, so a key out of its limit is back once the limit is raised or its usage reset; a first reading, a failed one, or one that finds it fuller tells nothing. An account refused for its quota has its agent's allowances read again at the next ask (`StaleAllowance`). A reading already out then was asked before the refusal: what it read is kept, as not read, so the ask after it lands reads again, as `StaleKeyAllowance` does for a key. Built-in Grok's own per-account cache (`grokLoginUsage`) doesn't keep such a reading at all: it goes to its caller only, so that next ask reaches xAI.
 
+`FetchNewBehind` registers a background fetch in `newRunning` before publishing
+it or starting its goroutine; `FetchNewSoon` shares that entry point after its
+time throttle. Synchronous `FetchNew` calls each register themselves too, and
+`fetchNew` releases each count when it finishes while returning whether a list
+is still missing. Thus `FetchingNew` includes queued work as soon as a page's
+background call returns, so the Providers page keeps polling until it ends.
+
 A provider's fetched model list keeps the upstream ids and order. Display
 names prefer `magpie_label`, then `display_name`, then a `name` without a
 vendor-style `: ` prefix, then the id
@@ -184,6 +191,7 @@ go test -tags nogui ./internal/provider -run '^Test(Partners|CountPartner|Notice
 go test -tags nogui ./internal/provider -run 'TestGeminiBase|TestCustomGeminiProvider|TestFactoryGeminiUnchanged'
 node --test internal/gui/tests/partners.test.cjs site/worker.test.mjs
 go test -tags nogui ./internal/provider
+go test -tags nogui ./internal/provider -run '^TestFetchNew' -count=20
 go test -tags nogui -run 'Vertex' .
 go test -tags nogui ./internal/provider ./internal/agent -run 'TestAccountDiscovery'
 node --test internal/gui/tests/account-discovery.test.cjs
