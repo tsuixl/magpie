@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -33,6 +34,9 @@ type fakeS3 struct {
 	objects            map[string][]byte
 	etags              map[string]string
 	noCond             bool
+	virtual            bool     // a virtual-hosted bucket, as OSS requires
+	upperETag          bool     // OSS returns uppercase ETags
+	conditionError     string   // a vendor's literal unsupported-header XML
 	log                []string // each request: method, and the condition sent
 	onWrite            func()   // runs once, at the next PUT or HEAD (a write's look first), before it is answered
 	sent               int      // the bytes of objects read
@@ -61,6 +65,10 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bucket, key, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
+	if f.virtual {
+		bucket, _, _ = strings.Cut(r.Host, ".")
+		key = strings.TrimPrefix(r.URL.Path, "/")
+	}
 	if bucket != f.bucket {
 		f.fail(w, http.StatusNotFound, "NoSuchBucket")
 		return
@@ -92,12 +100,37 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Method == http.MethodGet {
+			if strings.HasPrefix(r.Header.Get("Range"), "bytes=-") {
+				n, _ := strconv.Atoi(strings.TrimPrefix(r.Header.Get("Range"), "bytes=-"))
+				start := max(0, len(b)-n)
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, len(b)-1, len(b)))
+				w.WriteHeader(http.StatusPartialContent)
+				w.Write(b[start:])
+				return
+			}
 			f.sent += len(b)
 			w.Write(b)
 		}
+	case http.MethodPost:
+		if !r.URL.Query().Has("append") {
+			f.fail(w, http.StatusMethodNotAllowed, "MethodNotAllowed")
+			return
+		}
+		position, err := strconv.ParseInt(r.URL.Query().Get("position"), 10, 64)
+		if err != nil || position != int64(len(f.objects[key])) {
+			f.fail(w, http.StatusConflict, "PositionNotEqualToLength")
+			return
+		}
+		f.store(key, append(append([]byte{}, f.objects[key]...), body...))
+		w.Header().Set("X-Oss-Next-Append-Position", strconv.Itoa(len(f.objects[key])))
 	case http.MethodPut:
 		m, none := r.Header.Get("If-Match"), r.Header.Get("If-None-Match")
 		if f.noCond && (m != "" || none != "") {
+			if f.conditionError != "" {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, f.conditionError)
+				return
+			}
 			f.fail(w, http.StatusNotImplemented, "NotImplemented")
 			return
 		}
@@ -108,6 +141,10 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.store(key, body)
 		w.Header().Set("ETag", f.etags[key])
+	case http.MethodDelete:
+		delete(f.objects, key)
+		delete(f.etags, key)
+		w.WriteHeader(http.StatusNoContent)
 	default:
 		f.fail(w, http.StatusNotImplemented, "NotImplemented")
 	}
@@ -116,11 +153,24 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (f *fakeS3) store(key string, b []byte) {
 	h := md5.Sum(b)
 	f.objects[key], f.etags[key] = b, `"`+hex.EncodeToString(h[:])+`"`
+	if f.upperETag {
+		f.etags[key] = strings.ToUpper(f.etags[key])
+	}
 }
 
 // signed is whether r carries this key's signature over what arrived.
 func (f *fakeS3) signed(r *http.Request, body []byte) bool {
 	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "OSS4-HMAC-SHA256 ") {
+		at, err := time.Parse("20060102T150405Z", r.Header.Get("X-Oss-Date"))
+		if err != nil {
+			return false
+		}
+		again := r.Clone(r.Context())
+		fSign := signer{id: f.id, secret: f.secret, region: f.region}
+		fSign.signOSS(again, f.bucket, at)
+		return again.Header.Get("Authorization") == auth
+	}
 	var cred, names string
 	for _, part := range strings.Split(strings.TrimPrefix(auth, "AWS4-HMAC-SHA256 "), ", ") {
 		k, v, _ := strings.Cut(part, "=")
@@ -365,6 +415,7 @@ func TestConfigureS3Secret(t *testing.T) {
 	newComputer(t).use(t)
 	r2 := Config{URL: "s3://one", Endpoint: "https://acct.r2.cloudflarestorage.com", User: "AKID", Password: "secret", Passphrase: "correct horse"}
 	dav := Config{URL: "https://dav.example.com/dav/", User: "AKID", Password: "pw", Passphrase: "correct horse"}
+	oss := Config{URL: "s3://one", Endpoint: ossEndpoint, User: "AKID", Password: "oss-secret", Passphrase: "correct horse"}
 	for _, tc := range []struct {
 		from  Config
 		to    Config
@@ -377,6 +428,10 @@ func TestConfigureS3Secret(t *testing.T) {
 		{r2, Config{URL: "s3://one", User: "AKID"}, "", true}, // AWS
 		{dav, Config{URL: "s3://one", Endpoint: "https://dav.example.com", User: "AKID"}, "", true},
 		{r2, Config{URL: "https://acct.r2.cloudflarestorage.com/", User: "AKID"}, "", true},
+		{r2, Config{URL: "s3://one", Endpoint: ossEndpoint, User: "AKID"}, "", true},
+		{oss, Config{URL: "s3://two/p", Endpoint: "s3.oss-cn-hangzhou.aliyuncs.com/", User: "AKID"}, "oss-secret", false},
+		{oss, Config{URL: "s3://one", Endpoint: "https://s3.oss-cn-shanghai.aliyuncs.com", User: "AKID"}, "", true},
+		{oss, Config{URL: "s3://one", Endpoint: ossEndpoint, User: "OTHER"}, "", true},
 	} {
 		if err := Configure(tc.from); err != nil {
 			t.Fatal(err)

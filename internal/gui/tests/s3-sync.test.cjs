@@ -9,15 +9,15 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 
-const assets = path.resolve(__dirname, "../assets");
+const assets = process.env.MAGPIE_SYNC_ASSETS || path.resolve(__dirname, "../assets");
 
-function serve(lang, posts) {
+function serve(lang, posts, initialSync) {
   const settings = {
     theme: "light", lang, tray: "panel", version: "test", dir: "/tmp/magpie",
     gateway: "http://127.0.0.1:3425", visionModels: [], imageGenModels: [],
     fx: { rate: 7.2, stale: false },
   };
-  let sync = { on: false, keys: true, agents: true, library: true };
+  let sync = initialSync || { on: false, keys: true, agents: true, library: true };
   return async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -33,8 +33,13 @@ function serve(lang, posts) {
     if (pathname === "/api/davsync/save") {
       const b = request.postDataJSON();
       posts.push(b);
+      const target = (v) => v.kind === "s3" ? ((v.endpoint || "").startsWith("https://s3.oss-") ? "oss" : "s3") : "webdav";
+      const saved = { ...(sync.saved || {}) };
+      if (sync.on) saved[target(sync)] = { ...sync, saved: undefined };
+      const nextTarget = b.url.startsWith("s3://") ? ((b.endpoint || "").startsWith("https://s3.oss-") ? "oss" : "s3") : "webdav";
+      delete saved[nextTarget];
       sync = { on: true, kind: b.url.startsWith("s3://") ? "s3" : "webdav", url: b.url, user: b.user, endpoint: b.endpoint, region: b.region,
-        pathStyle: b.pathStyle, passwordSet: true, passphraseSet: true, keys: b.keys, agents: b.agents, library: b.library };
+        saved, pathStyle: b.pathStyle, passwordSet: true, passphraseSet: true, keys: b.keys, agents: b.agents, library: b.library };
       return json(sync);
     }
     if (pathname.startsWith("/api/")) return json({});
@@ -77,11 +82,17 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         await page.waitForTimeout(300);
       };
       await toEnd();
-      assert.equal(await first.locator(".name").textContent(), zh ? "WebDAV / S3 同步" : "WebDAV or S3 sync");
+      const offName = await first.locator(".name").textContent();
       await first.locator(".val button").click();
 
       const form = list.locator(".sync-form");
       await form.waitFor({ state: "visible" });
+      assert.equal(await form.locator(".segs .opt", { hasText: /^OSS$/ }).count(), 1, "OSS must be directly selectable beside WebDAV and S3");
+      assert.deepEqual(await page.evaluate(() => [
+        "https://s3.oss-cn-hangzhou-internal.aliyuncs.com", "https://s3.oss-accelerate.aliyuncs.com",
+        "https://s3.oss-cn-hangzhou.aliyuncs.com.invalid", "https://s3.oss-invalid.aliyuncs.com",
+      ].map(ossRegionOf)), ["cn-hangzhou", "", "", ""]);
+      assert.equal(offName, zh ? "WebDAV / S3 / OSS 同步" : "WebDAV or S3 or OSS sync");
       const labels = async () => (await form.locator(":scope > label:visible").allTextContents()).filter(Boolean);
       // WebDAV is the one picked at first, S3's fields not shown
       assert.deepEqual(await labels(), zh ? ["同步到", "地址", "用户", "密码", "口令", "同时同步"] : ["Sync to", "Address", "User", "Password", "Passphrase", "Also sync"]);
@@ -170,7 +181,155 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       // frame, so measure after that frame
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       assert.equal(await form.evaluate((e) => e.scrollWidth > e.clientWidth), false);
+
+      // Each entry has independent drafts; an R2 secret stays in S3.
+      await box(L.secret).fill("only-for-r2");
+      await form.locator(".segs .opt", { hasText: /^OSS$/ }).click();
+      assert.equal(await box(L.endpoint).inputValue(), "https://s3.oss-cn-hangzhou.aliyuncs.com");
+      assert.equal(await box(L.region).inputValue(), "cn-hangzhou");
+      assert.equal(await box(L.secret).inputValue(), "");
+      assert.equal(await box(L.prefix).inputValue(), "backups", "only a new OSS entry gets the default prefix");
+      const directory = () => form.locator(":scope > label:visible", { hasText: new RegExp("^" + L.prefix + "$") }).locator("xpath=following-sibling::div[1]").locator(".hint");
+      assert.equal(await directory().textContent(), zh ? "备份目录：backups/magpie/" : "Backup directory: backups/magpie/");
+      if (process.env.ARTIFACT_DIR && zh) {
+        await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+        await page.setViewportSize({ width: 900, height: 1100 });
+        await page.waitForTimeout(300);
+        await toEnd();
+        await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-zh-oss-new-backups.png`), fullPage: true });
+        await page.setViewportSize({ width: 520, height: 700 });
+        await page.waitForTimeout(300);
+      }
+      await box(L.bucket).fill("oss-backups");
+      await box(L.prefix).fill("team");
+      assert.equal(await directory().textContent(), zh ? "备份目录：team/magpie/" : "Backup directory: team/magpie/");
+      await box(L.key).fill("OSSKEY");
+      await box(L.region).fill("cn-shanghai");
+      assert.equal(await box(L.endpoint).inputValue(), "https://s3.oss-cn-shanghai.aliyuncs.com");
+      await box(L.secret).fill("oss-secret");
+      // Invalid OSS endpoints and a mismatched region are refused locally.
+      for (const bad of ["", "https://oss-cn-shanghai.aliyuncs.com", "https://s3.oss-cn-shanghai.aliyuncs.com.invalid"]) {
+        await box(L.endpoint).fill(bad);
+        await toEnd();
+        await save.click();
+        assert.equal(await form.locator(".editor-error").textContent(), zh ? "请填写 OSS 区域 S3 终结点" : "Use a regional OSS S3 endpoint");
+        assert.equal(posts.length, 1);
+      }
+      await box(L.endpoint).fill("https://s3.oss-cn-hangzhou.aliyuncs.com");
+      await toEnd();
+      await save.click();
+      assert.equal(await form.locator(".editor-error").textContent(), zh ? "OSS 终结点和区域必须一致" : "The OSS endpoint and region must match");
+      assert.equal(posts.length, 1);
+      await box(L.endpoint).fill("https://s3.oss-cn-shanghai.aliyuncs.com");
+      for (let i = 0; i < 40 && (await segTop()) < 10; i++) { await page.mouse.wheel(0, -40); await page.waitForTimeout(15); }
+      await page.waitForTimeout(300);
+      await form.locator(".segs .opt", { hasText: "WebDAV" }).click();
+      await form.locator(".segs .opt", { hasText: "S3" }).click();
+      assert.equal(await box(L.endpoint).inputValue(), "https://acct.r2.cloudflarestorage.com");
+      assert.equal(await box(L.secret).inputValue(), "only-for-r2");
+      await form.locator(".segs .opt", { hasText: /^OSS$/ }).click();
+      assert.equal(await box(L.endpoint).inputValue(), "https://s3.oss-cn-shanghai.aliyuncs.com");
+      assert.equal(await box(L.secret).inputValue(), "oss-secret");
+      await toEnd();
+      await save.click();
+      await form.waitFor({ state: "detached" });
+      assert.deepEqual(posts[1], { url: "s3://oss-backups/team", user: "OSSKEY", password: "oss-secret",
+        endpoint: "https://s3.oss-cn-shanghai.aliyuncs.com", region: "cn-shanghai", pathStyle: false,
+        passphrase: "", keys: true, agents: true, library: true });
+      assert.equal(await first.locator(".name").textContent(), zh ? "OSS 同步" : "OSS sync");
+      await page.waitForTimeout(300);
+      await toEnd();
+      for (let i = 0; i < 40 && (await under()); i++) { await page.mouse.wheel(0, -60); await page.waitForTimeout(30); }
+      await first.locator(".val button").last().click();
+      await form.waitFor({ state: "visible" });
+      assert.equal(await form.locator(".segs .opt.on").textContent(), zh ? "OSS · 使用中" : "OSS · on");
+      assert.equal(await box(L.bucket).inputValue(), "oss-backups");
+      if (process.env.ARTIFACT_DIR && zh) {
+        await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
+        await page.setViewportSize({ width: 900, height: 1100 });
+        await page.waitForTimeout(300);
+        await toEnd();
+        await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-zh-oss-selected.png`), fullPage: true });
+      }
+      await form.locator(".segs .opt", { hasText: /^S3$/ }).click();
+      assert.equal(await box(L.endpoint).inputValue(), "https://acct.r2.cloudflarestorage.com");
+      assert.equal(await box(L.key).inputValue(), "AKIDEXAMPLE");
+      assert.equal(await box(L.secret).getAttribute("placeholder"), zh ? "已保存 · 输入新的即可替换" : "saved · type a new one to replace it");
+      await form.locator(".segs .opt", { hasText: "OSS" }).click();
+      await box(L.endpoint).fill("https://s3.oss-cn-shanghai-internal.aliyuncs.com");
+      await box(L.secret).fill("oss-internal-secret");
+      await toEnd();
+      await save.click();
+      await form.waitFor({ state: "detached" });
+      assert.equal(posts[2].endpoint, "https://s3.oss-cn-shanghai-internal.aliyuncs.com");
+      await page.waitForTimeout(300);
+      await toEnd();
+      for (let i = 0; i < 40 && (await under()); i++) { await page.mouse.wheel(0, -60); await page.waitForTimeout(30); }
+      await first.locator(".val button").last().click();
+      await form.waitFor({ state: "visible" });
+      assert.equal(await box(L.endpoint).inputValue(), "https://s3.oss-cn-shanghai-internal.aliyuncs.com");
+      await box(L.region).fill("cn-hangzhou");
+      assert.equal(await box(L.endpoint).inputValue(), "https://s3.oss-cn-hangzhou-internal.aliyuncs.com");
       assert.deepEqual(errors, []);
+    });
+    test(`${engine} ${lang}: regional OSS endpoints with multiple region segments save`, async (t) => {
+      const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+      t.after(() => browser.close());
+      const page = await browser.newPage({ viewport: { width: 900, height: 1100 }, reducedMotion: "reduce" });
+      const posts = [];
+      await page.route("**/*", serve(lang, posts));
+      await page.goto("http://magpie.test/");
+      await page.locator("#prefs").click();
+      await page.locator(":is(#setTab-sync, .nav-s[data-of=setTab-sync]):visible").click();
+      const list = page.locator("#syncList"), first = list.locator(".row.pref").first(), form = list.locator(".sync-form");
+      const words = lang === "zh" ? { endpoint: "终结点", bucket: "存储桶", region: "区域", key: "Access Key", secret: "Secret", phrase: "口令" }
+        : { endpoint: "Endpoint", bucket: "Bucket", region: "Region", key: "Access key", secret: "Secret", phrase: "Passphrase" };
+      const field = (name) => form.locator(":scope > label:visible", { hasText: new RegExp("^" + words[name] + "$") }).locator("xpath=following-sibling::div[1]").locator("input");
+      for (const [region, internal] of [["cn-wuhan-lr", false], ["cn-wuhan-lr", true], ["cn-shanghai-finance-1", false], ["cn-shanghai-finance-1", true]]) {
+        await first.locator(".val button").last().click();
+        await form.waitFor({ state: "visible" });
+        if (!posts.length) {
+          await form.locator(".segs .opt", { hasText: /^OSS$/ }).click();
+          await field("bucket").fill("test-bucket");
+          await field("key").fill("SYNTHETICKEY");
+          await field("secret").fill("dummy-secret");
+          await field("phrase").fill("dummy passphrase");
+        }
+        const wasInternal = (await field("endpoint").inputValue()).includes("-internal.aliyuncs.com");
+        await field("region").fill(region);
+        assert.equal(await field("endpoint").inputValue(), `https://s3.oss-${region}${wasInternal ? "-internal" : ""}.aliyuncs.com`, "typing a valid multi-segment region updates the endpoint");
+        const endpoint = `https://s3.oss-${region}${internal ? "-internal" : ""}.aliyuncs.com`;
+        await field("endpoint").fill(endpoint);
+        await form.locator(".bar .primary").click();
+        await page.waitForTimeout(100);
+        assert.equal(posts.at(-1)?.endpoint, endpoint, "a valid regional OSS endpoint must be submitted");
+        assert.equal(posts.at(-1)?.region, region);
+        await form.waitFor({ state: "detached" });
+        assert.equal(await first.locator(".name").textContent(), lang === "zh" ? "OSS 同步" : "OSS sync");
+      }
+    });
+    test(`${engine} ${lang}: an existing OSS empty prefix stays empty`, async (t) => {
+      const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+      t.after(() => browser.close());
+      const page = await browser.newPage({ viewport: { width: 900, height: 1100 }, reducedMotion: "reduce" });
+      const posts = [];
+      await page.route("**/*", serve(lang, posts, { on: true, kind: "s3", url: "s3://saved-oss", endpoint: "https://s3.oss-cn-hangzhou.aliyuncs.com",
+        region: "cn-hangzhou", user: "SAVEDKEY", passwordSet: true, passphraseSet: true, keys: true, agents: true, library: true }));
+      await page.goto("http://magpie.test/");
+      await page.locator("#prefs").click();
+      await page.locator(":is(#setTab-sync, .nav-s[data-of=setTab-sync]):visible").click();
+      const list = page.locator("#syncList"), first = list.locator(".row.pref").first();
+      await first.locator(".val button").last().click();
+      const form = list.locator(".sync-form");
+      const prefixField = form.locator(":scope > label:visible", { hasText: lang === "zh" ? /^前缀$/ : /^Prefix$/ }).locator("xpath=following-sibling::div[1]");
+      assert.equal(await prefixField.locator("input").inputValue(), "");
+      assert.equal(await prefixField.locator(".hint").textContent(), lang === "zh" ? "备份目录：magpie/" : "Backup directory: magpie/");
+      await form.locator(".segs .opt", { hasText: /^S3$/ }).click();
+      await form.locator(".segs .opt", { hasText: "OSS" }).click();
+      assert.equal(await prefixField.locator("input").inputValue(), "");
+      await form.locator(".bar .primary").click();
+      await form.waitFor({ state: "detached" });
+      assert.equal(posts[0].url, "s3://saved-oss");
     });
   }
 }

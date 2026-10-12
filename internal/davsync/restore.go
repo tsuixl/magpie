@@ -58,7 +58,7 @@ func Restore(ctx context.Context) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		data, ver, err := d.get(ctx, version{}) // the file as it is now, never the cached copy
+		data, ver, err := getFreshBackup(ctx, c, d, nil) // the body as it is now, retaining this target's journal history
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func Upload(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		data, ver, err := d.get(ctx, version{})
+		data, ver, err := getFreshBackup(ctx, c, d, nil)
 		if err != nil {
 			return err
 		}

@@ -81,6 +81,8 @@ const s3Usage = `usage:
 
   endpoint    the server, https://…; none is AWS. R2: https://<account>.r2.cloudflarestorage.com
   region      none is us-east-1, or auto on R2; AWS says which when it is another
+  OSS         use https://s3.oss-<region>.aliyuncs.com (e.g. cn-hangzhou); region defaults from
+              that endpoint. Path-style must be no: OSS only supports the bucket in the host name
   path-style  yes: the bucket in the path (https://host/bucket/…), as MinIO and most servers of your
               own want; no: in the host name (https://bucket.host/…). Always yes for an IP address
   passphrase  the same on every computer: the file is sealed with it on this one, and the server only
@@ -99,6 +101,7 @@ const s3Usage = `usage:
 
   e.g. magpie s3 on s3://my-bucket/magpie endpoint=https://<account>.r2.cloudflarestorage.com access-key-id=…
        magpie s3 on s3://backups endpoint=http://nas.local:9000 path-style=yes access-key-id=…
+       magpie s3 on s3://my-bucket/backups endpoint=https://s3.oss-cn-hangzhou.aliyuncs.com access-key-id=…
 `
 
 // syncKind is magpie webdav's or magpie s3's: which server it sets up.

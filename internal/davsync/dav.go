@@ -119,6 +119,24 @@ type remote interface {
 	put(ctx context.Context, data []byte, etag string) (version, error)
 }
 
+// getFreshBackup fetches and validates the body, while preserving an OSS
+// journal already seen for this exact target. Dropping that hint would let
+// restore, upload or a missing cache silently return to a legacy file.
+func getFreshBackup(ctx context.Context, c Config, d remote, known *state) ([]byte, version, error) {
+	if s, ok := d.(*s3); ok && s.ossBackup() {
+		if known == nil {
+			st := loadState()
+			known = &st
+		}
+		var have version
+		if known.Key == stateKey(c) {
+			have = known.Server
+		}
+		return s.readOSSBackup(ctx, have, true)
+	}
+	return d.get(ctx, version{})
+}
+
 // newRemote is c's: an S3 bucket for an s3:// address, WebDAV for the rest.
 func newRemote(c Config) (remote, error) {
 	if c.S3() {

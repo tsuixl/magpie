@@ -59,7 +59,8 @@ type Config struct {
 	Password   string `json:"password,omitempty"`
 	Passphrase string `json:"passphrase"`
 	// S3 alone: the server (none is AWS), its region (none is us-east-1,
-	// auto for R2), and the bucket in the path rather than the host name
+	// auto for R2, from a regional OSS S3 endpoint), and the bucket in the
+	// path rather than the host name
 	Endpoint  string `json:"endpoint,omitempty"`
 	Region    string `json:"region,omitempty"`
 	PathStyle bool   `json:"pathStyle,omitempty"`
@@ -75,6 +76,9 @@ type Config struct {
 	// WebDAV folder's while an S3 bucket is synced to, or the other way):
 	// moving back finds it as it was, its password too. Nothing syncs to it.
 	Other *Server `json:"other,omitempty"`
+	// Saved keeps inactive WebDAV, generic S3 and OSS targets independently.
+	// Other remains the legacy opposite-backend server for older clients.
+	Saved map[string]Server `json:"saved,omitempty"`
 	// AutoEvery is how many minutes apart the gateway's magpie syncs by
 	// itself: 0 is Every's 3, Manual never — then only Sync now syncs
 	// (#847). Set by SetAuto alone; Configure keeps it.
@@ -120,10 +124,28 @@ func (s Server) config() Config {
 // saved is the setup whose password c may keep: old, or, for c of the
 // other kind, the server of c's kind kept beside it, when there is one.
 func (old Config) saved(c Config) Config {
+	if old.target() != c.target() {
+		if s, ok := old.Saved[c.target()]; ok {
+			return s.config()
+		}
+	}
 	if o := old.Other; o != nil && old.S3() != c.S3() && o.config().S3() == c.S3() {
 		return o.config()
 	}
 	return old
+}
+
+// target distinguishes the two S3 configuration entries without adding a
+// third remote backend. Native OSS API endpoints keep the generic S3 entry.
+func (c Config) target() string {
+	if !c.S3() {
+		return "webdav"
+	}
+	u, err := url.Parse(s3Endpoint(c.Endpoint, ""))
+	if err == nil && ossS3Region(u.Hostname()) != "" {
+		return "oss"
+	}
+	return "s3"
 }
 
 func (c Config) library() bool { return c.Library == nil || *c.Library }
@@ -192,6 +214,7 @@ func Load() (Config, bool) {
 // and user: it is never sent to another, and is asked for again there.
 func Configure(c Config) error {
 	c.Other = nil // kept here, never given
+	c.Saved = nil
 	c.URL, c.User = strings.TrimSpace(c.URL), strings.TrimSpace(c.User)
 	c.Endpoint, c.Region = strings.TrimSpace(c.Endpoint), strings.TrimSpace(c.Region)
 	if !c.S3() { // WebDAV's own: nothing of an S3 setup left behind
@@ -227,6 +250,17 @@ func Configure(c Config) error {
 			// the other kind's server is kept: the one moved from, or the
 			// one kept before
 			c.Other = old.Other
+			c.Saved = make(map[string]Server)
+			for k, s := range old.Saved {
+				c.Saved[k] = s
+			}
+			if o := old.Other; o != nil {
+				c.Saved[o.config().target()] = *o
+			}
+			if old.target() != c.target() {
+				c.Saved[old.target()] = old.where()
+			}
+			delete(c.Saved, c.target())
 			c.AutoEvery = old.AutoEvery // SetAuto's, not the form's
 			if old.S3() != c.S3() {
 				o := old.where()
@@ -374,7 +408,8 @@ type View struct {
 	Notice     *Notice   `json:"notice,omitempty"`
 	// Other is the other kind's server, kept for moving back to: not
 	// synced to
-	Other *OtherView `json:"other,omitempty"`
+	Other *OtherView           `json:"other,omitempty"`
+	Saved map[string]OtherView `json:"saved,omitempty"` // inactive entries, never secrets
 	// Auto is how many minutes apart it syncs by itself; 0 never: only when
 	// asked
 	Auto int `json:"auto"`
@@ -421,6 +456,13 @@ func Status() View {
 	if o := c.Other; o != nil {
 		v.Other = &OtherView{Kind: strings.ToLower(o.config().Kind()), URL: o.URL, User: o.User, PasswordSet: o.Password != "",
 			Endpoint: o.Endpoint, Region: o.Region, PathStyle: o.PathStyle}
+	}
+	if len(c.Saved) != 0 {
+		v.Saved = make(map[string]OtherView)
+		for k, o := range c.Saved {
+			v.Saved[k] = OtherView{Kind: strings.ToLower(o.config().Kind()), URL: o.URL, User: o.User, PasswordSet: o.Password != "",
+				Endpoint: o.Endpoint, Region: o.Region, PathStyle: o.PathStyle}
+		}
 	}
 	return v
 }
@@ -912,7 +954,7 @@ func syncOnce(ctx context.Context, c Config, st *state) error {
 		// changed here: merged with the server's file as last seen, or,
 		// when that copy is gone, with the file read again
 		if data = cached(st.Sum); data == nil {
-			if data, ver, err = d.get(ctx, version{}); err != nil {
+			if data, ver, err = getFreshBackup(ctx, c, d, st); err != nil {
 				return err
 			}
 		}

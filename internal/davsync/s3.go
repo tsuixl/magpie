@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +18,9 @@ import (
 // s3 keeps the backup in an S3-compatible bucket — AWS S3, Cloudflare R2,
 // Backblaze B2, MinIO, Garage, a NAS — at <prefix>/magpie/magpie.magpie-backup,
 // as the WebDAV folder does: the object read with its ETag, written back
-// with If-Match, the first one with If-None-Match: *. The address is
+// with If-Match, the first one with If-None-Match: *. Regional OSS backups
+// instead use immutable encrypted snapshots and a native append journal;
+// archive and usage objects still use the ordinary S3 operations. The address is
 // s3://bucket/prefix; User is the access key ID and Password its secret.
 type s3 struct {
 	endpoint    *url.URL // scheme and host, and a path for a server under one
@@ -29,12 +32,36 @@ type s3 struct {
 }
 
 // defaultRegion is the region for an endpoint given none: R2 signs with
-// "auto", everything else as AWS's first.
+// "auto", OSS's S3 endpoint names its region, everything else as AWS's first.
 func defaultRegion(endpoint string) string {
-	if u, err := url.Parse(endpoint); err == nil && strings.HasSuffix(strings.ToLower(u.Hostname()), ".r2.cloudflarestorage.com") {
-		return "auto"
+	if u, err := url.Parse(endpoint); err == nil {
+		if region := ossS3Region(u.Hostname()); region != "" {
+			return region
+		}
+		if strings.HasSuffix(strings.ToLower(u.Hostname()), ".r2.cloudflarestorage.com") {
+			return "auto"
+		}
 	}
 	return "us-east-1"
+}
+
+var ossRegionName = regexp.MustCompile(`^[a-z]{2}(-[a-z0-9]+)+$`)
+
+// ossS3Region recognizes only OSS's regional S3 endpoint, not its native
+// API endpoint, acceleration endpoint or a custom domain. Requests still
+// use AWS SigV4, service s3.
+func ossS3Region(host string) string {
+	host = strings.ToLower(host)
+	r, ok := strings.CutPrefix(host, "s3.oss-")
+	if !ok {
+		return ""
+	}
+	r, ok = strings.CutSuffix(r, ".aliyuncs.com")
+	r = strings.TrimSuffix(r, "-internal")
+	if !ok || !ossRegionName.MatchString(r) {
+		return ""
+	}
+	return r
 }
 
 // s3Endpoint is the endpoint as typed, with https:// when it has no
@@ -64,6 +91,14 @@ func newS3(c Config) (*s3, error) {
 		return nil, fmt.Errorf("%q is not an S3 endpoint (https://…)", c.Endpoint)
 	}
 	e.Path = strings.TrimRight(e.Path, "/")
+	if ossRegion := ossS3Region(e.Hostname()); ossRegion != "" {
+		if region != ossRegion {
+			return nil, fmt.Errorf("the OSS S3 endpoint is in region %s, not %s: set the region to %s", ossRegion, region, ossRegion)
+		}
+		if c.PathStyle || strings.Contains(u.Host, ".") {
+			return nil, fmt.Errorf("OSS S3 needs virtual-hosted addressing: turn off path-style and use a bucket name without dots")
+		}
+	}
 	key := folder + "/" + file
 	if p := strings.Trim(u.Path, "/"); p != "" {
 		key = p + "/" + key
@@ -196,6 +231,13 @@ func (s *s3) explain(op string, e s3Error) error {
 // errNotModified when it is still have: the If-None-Match is signed with
 // the rest.
 func (s *s3) get(ctx context.Context, have version) (data []byte, v version, err error) {
+	if s.ossBackup() {
+		return s.getOSSBackup(ctx, have)
+	}
+	return s.getObject(ctx, have)
+}
+
+func (s *s3) getObject(ctx context.Context, have version) (data []byte, v version, err error) {
 	cond := have.conditions()
 	res, err := s.send(ctx, http.MethodGet, nil, cond)
 	if err != nil {
@@ -232,6 +274,13 @@ var unconditional sync.Map
 // where there is none yet — and errChanged when another computer wrote in
 // between.
 func (s *s3) put(ctx context.Context, data []byte, etag string) (version, error) {
+	if s.ossBackup() {
+		return s.putOSSBackup(ctx, data, etag)
+	}
+	return s.putObject(ctx, data, etag)
+}
+
+func (s *s3) putObject(ctx context.Context, data []byte, etag string) (version, error) {
 	where := s.endpoint.String() + " " + s.bucket
 	if _, no := unconditional.Load(where); !no {
 		h := map[string]string{"Content-Type": "application/octet-stream"}

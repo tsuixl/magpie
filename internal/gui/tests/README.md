@@ -1415,6 +1415,19 @@ works as follows, in English and Chinese:
   The row then reads "S3 sync" with the bucket and server.
 - Edit opens the form with S3 picked, marked "S3 · on", and the fields as
   saved. The secret field is empty, with "saved" as its placeholder.
+- OSS is a direct third choice, with its own bucket, endpoint, region and
+  credentials. Region changes derive the dedicated S3 endpoint; native,
+  empty and mismatched endpoints post nothing. Switching entries preserves
+  drafts and isolates secrets; saving OSS and reopening restores OSS and
+  the previously saved generic S3 entry. Internal endpoints stay internal.
+  Both engines exercise narrow forms and the OSS target's active label.
+
+`TestOSSS3Address`, `TestOSSS3Requests`, `TestOSSS3UsageAndErrors` and
+`TestOSSS3KeepsThreeTargets` use local signed requests and files only. They
+cover region inference, virtual hosts, uppercase ETags, conditional conflicts,
+OSS's documented unsupported-header response, usage operations and pagination,
+legacy `other` migration, saved credentials and views without secrets. None
+proves real OSS conditional PUT support.
 
 `sync-other-kind.test.cjs` checks that moving sync between WebDAV and S3
 keeps the other's settings (ARNO on Discord: trying S3 wiped the WebDAV

@@ -20319,11 +20319,16 @@ async function renderSync(v) {
     const host = s3 ? [v.url, v.endpoint && hostOf(v.endpoint.includes("://") ? v.endpoint : "https://" + v.endpoint)].filter(Boolean).join(" · ") : hostOf(v.url);
     status = v.error ? t("Couldn't sync: {error}", { error: v.serverFile ? serverFileSaid(v.serverFile) : v.error })
       : v.last ? t("Synced {when} · {host}", { when: syncWhen(v.last), host }) : t("Not synced yet · {host}", { host });
-    // the other kind's server, kept from before sync moved here
-    if (v.other) status += " · " + t("{kind} settings kept", { kind: v.other.kind === "s3" ? "S3" : "WebDAV" });
+    // All inactive entries, including the legacy opposite-backend server.
+    const kept = { ...(v.saved || {}) };
+    if (v.other) kept[syncTarget(v.other)] ||= v.other;
+    delete kept[syncTarget(v)];
+    for (const k of ["webdav", "s3", "oss"]) {
+      if (kept[k]) status += " · " + t("{kind} settings kept", { kind: { webdav: "WebDAV", s3: "S3", oss: "OSS" }[k] });
+    }
     if (v.auto === 0) status += " · " + t("only when asked");
   }
-  const sub = row(t(s3 ? "S3 sync" : v.on ? "WebDAV sync" : "WebDAV or S3 sync"), status, ...(v.on
+  const sub = row(t(s3 ? (syncTarget(v) === "oss" ? "OSS sync" : "S3 sync") : v.on ? "WebDAV sync" : "WebDAV or S3 or OSS sync"), status, ...(v.on
     ? [btn(t("Sync now"), async (e) => { e.target.classList.add("busy"); renderSync(await api("davsync/now", {}).catch((x) => ({ ...v, error: x.message }))); }),
        btn(t(syncOpen === "dav" ? "Close" : "Edit"), toggle("dav"))]
     : [btn(t(syncOpen === "dav" ? "Close" : "Set up"), toggle("dav"))]));
@@ -20533,12 +20538,27 @@ function syncBar(ed, err, ...tools) {
 // typed in the other is still there on going back. The kind not synced to
 // shows the server kept from before sync moved from it (ARNO on Discord:
 // trying S3 wiped the WebDAV setup); saving it moves sync back there.
+// Only regional OSS S3 endpoints identify the OSS configuration entry.
+function ossRegionOf(endpoint) {
+  try {
+    const host = new URL(endpoint.includes("://") ? endpoint : "https://" + endpoint).hostname.toLowerCase();
+    const prefix = "s3.oss-", suffix = ".aliyuncs.com";
+    if (!host.startsWith(prefix) || !host.endsWith(suffix)) return "";
+    const region = host.slice(prefix.length, -suffix.length).replace(/-internal$/, "");
+    return /^[a-z]{2}(?:-[a-z0-9]+)+$/.test(region) ? region : "";
+  } catch { return ""; }
+}
+function syncTarget(v) { return v.kind === "s3" ? (ossRegionOf(v.endpoint || "") ? "oss" : "s3") : "webdav"; }
+
 function davForm(v) {
   const ed = el("div", "editor sync-form");
-  const active = v.on ? (v.kind === "s3" ? "s3" : "webdav") : "";
+  const active = v.on ? syncTarget(v) : "";
   let kind = active || "webdav";
   const saved = t("saved · type a new one to replace it");
-  const dav = v.kind === "s3" ? v.other || {} : v, bk = v.kind === "s3" ? v : v.other || {};
+  const kept = { ...(v.saved || {}) };
+  if (v.other) kept[syncTarget(v.other)] ||= v.other;
+  if (v.on) kept[active] = v;
+  const dav = kept.webdav || {}, bk = kept.s3 || {};
   const url = input(dav.url || "", "https://dav.jianguoyun.com/dav/");
   const user = input(dav.user || "", t("user name"));
   const pass = input("", dav.passwordSet ? saved : t("password, or an app password"), "password");
@@ -20569,23 +20589,48 @@ function davForm(v) {
     ...field(t("Access key"), keyID),
     ...field(t("Secret"), secret),
     ...field("", pathL, t("MinIO and most NAS servers need it."))];
-  const names = { webdav: "WebDAV", s3: "S3" };
+  const os = kept.oss || {};
+  const [ob, op] = (() => { const m = /^s3:\/\/([^/]*)\/?(.*)$/i.exec(os.url || ""); return m ? [m[1], m[2]] : ["", ""]; })();
+  const ossEndpoint = input(os.endpoint || "https://s3.oss-cn-hangzhou.aliyuncs.com", "https://s3.oss-cn-hangzhou.aliyuncs.com");
+  const ossBucket = input(ob, t("bucket name")), ossPrefix = input(os.url ? op : "backups", t("optional"));
+  const ossRegion = input(os.region || ossRegionOf(os.endpoint) || "cn-hangzhou", "cn-hangzhou");
+  const ossKey = input(os.user || "", "AccessKey ID"), ossSecret = input("", os.passwordSet ? saved : t("secret access key"), "password");
+  ossRegion.addEventListener("input", () => {
+    const r = ossRegion.value.trim();
+    if (!/^[a-z]{2}(?:-[a-z0-9]+)+$/.test(r) || !ossRegionOf(ossEndpoint.value)) return;
+    const internal = /-internal\.aliyuncs\.com\/?$/i.test(ossEndpoint.value.trim());
+    ossEndpoint.value = "https://s3.oss-" + r + (internal ? "-internal" : "") + ".aliyuncs.com";
+    ossSecret.value = "";
+    ossSecret.placeholder = t("secret access key");
+  });
+  const ossFields = [...field(t("Endpoint"), ossEndpoint, t("Use your bucket's regional OSS S3 endpoint. Changing region updates the endpoint.")),
+    ...field(t("Bucket"), ossBucket), ...field(t("Prefix"), ossPrefix, " "), ...field(t("Region"), ossRegion),
+    ...field(t("Access key"), ossKey), ...field(t("Secret"), ossSecret)];
+  const ossDirectory = ossFields[5].querySelector(".hint");
+  const showOssDirectory = () => {
+    const p = ossPrefix.value.trim().replace(/^\/+|\/+$/g, "");
+    ossDirectory.textContent = t("Backup directory: {path}", { path: (p ? p + "/" : "") + "magpie/" });
+  };
+  ossPrefix.addEventListener("input", showOssDirectory);
+  showOssDirectory();
+  const names = { webdav: "WebDAV", s3: "S3", oss: "OSS" };
   // which one is synced to, and that the other's settings stay
-  const to = field(t("Sync to"), segs([["webdav", "WebDAV"], ["s3", "S3"]].map(([id, n]) => [id, id === active ? t("{kind} · on", { kind: n }) : n]), kind, (k) => { kind = k; show(); }), " ");
+  const to = field(t("Sync to"), segs([["webdav", "WebDAV"], ["s3", "S3"], ["oss", "OSS"]].map(([id, n]) => [id, id === active ? t("{kind} · on", { kind: n }) : n]), kind, (k) => { kind = k; show(); }), " ");
   const where = to[1].querySelector(".hint");
   const save = el("button", "text primary", "");
   const show = () => {
     for (const x of davFields) x.hidden = kind !== "webdav";
     for (const x of s3Fields) x.hidden = kind !== "s3";
-    const other = kind === "s3" ? "webdav" : "s3";
+    for (const x of ossFields) x.hidden = kind !== "oss";
+    const other = Object.keys(kept).filter((k) => names[k] && k !== active).map((k) => names[k]).join(t(", "));
     where.textContent = !active ? ""
-      : kind === active ? (v.other ? t("Syncing here now. The {other} settings are kept, not synced to: pick {other} to see them.", { other: names[other] }) : t("Syncing here now."))
+      : kind === active ? (other ? t("Syncing here now. The {other} settings are kept, not synced to: pick {other} to see them.", { other }) : t("Syncing here now."))
       : t("{active} is synced to now. Saving moves sync here; the {active} settings are kept for moving back.", { active: names[active] });
     where.hidden = !active;
     save.textContent = !active ? t("Turn on") : kind === active ? t("Save") : t("Move sync to {kind}", { kind: names[kind] });
   };
   ed.append(...to,
-    ...davFields, ...s3Fields,
+    ...davFields, ...s3Fields, ...ossFields,
     ...field(t("Passphrase"), phrase, t("The file is sealed with it on this computer; the server only ever sees it sealed. Keep it: without it the file can't be opened.")),
     ...field(t("Also sync"), what, t("Usage goes as a file a day: times, tokens, models and costs, never what was said. Turn it on on each computer that shares its own.")));
   show();
@@ -20595,12 +20640,18 @@ function davForm(v) {
   cancel.onclick = () => { syncOpen = ""; renderSync(); };
   off.onclick = async () => { syncOpen = ""; renderSync(await api("davsync/off", {}).catch(() => null) || undefined); };
   save.onclick = async () => {
-    const b = bucket.value.trim(), p = prefix.value.trim().replace(/^\/+|\/+$/g, "");
-    if (kind === "s3" && !b) return say(t("Name the bucket"));
+    const isOSS = kind === "oss", isS3 = kind !== "webdav";
+    const b = (isOSS ? ossBucket : bucket).value.trim(), p = (isOSS ? ossPrefix : prefix).value.trim().replace(/^\/+|\/+$/g, "");
+    if (isS3 && !b) return say(t("Name the bucket"));
+    if (isOSS) {
+      const r = ossRegionOf(ossEndpoint.value.trim());
+      if (!r) return say(t("Use a regional OSS S3 endpoint"));
+      if (ossRegion.value.trim() && ossRegion.value.trim() !== r) return say(t("The OSS endpoint and region must match"));
+    }
     if (!v.passphraseSet && !phrase.value) return say(t("Pick a passphrase: the file is sealed with it"));
     save.classList.add("busy");
-    const where = kind === "s3"
-      ? { url: "s3://" + b + (p ? "/" + p : ""), user: keyID.value.trim(), password: secret.value, endpoint: endpoint.value.trim(), region: region.value.trim(), pathStyle: pathStyle.checked }
+    const where = isS3
+      ? { url: "s3://" + b + (p ? "/" + p : ""), user: (isOSS ? ossKey : keyID).value.trim(), password: (isOSS ? ossSecret : secret).value, endpoint: (isOSS ? ossEndpoint : endpoint).value.trim(), region: (isOSS ? ossRegion : region).value.trim(), pathStyle: isOSS ? false : pathStyle.checked }
       : { url: url.value.trim(), user: user.value.trim(), password: pass.value };
     try {
       const r = await api("davsync/save", { ...where, passphrase: phrase.value, keys: keys.checked, agents: agents.checked, library: lib.checked, ...(use.checked || v.usage ? { usage: use.checked } : {}) });

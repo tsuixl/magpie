@@ -1948,7 +1948,7 @@ stdin.
 
 ### Keeping machines in sync
 
-*Settings → Sync and backup → WebDAV or S3 sync* keeps the same backup on a
+*Settings → Sync and backup → WebDAV or S3 or OSS sync* keeps the same backup on a
 server and brings every machine up to date with it, every 3 minutes while the
 gateway runs. Choose one of these:
 
@@ -1958,21 +1958,24 @@ gateway runs. Choose one of these:
   NAS or any other S3-compatible server.
 
 The file is sealed on your machine with the passphrase, so the server only
-ever stores ciphertext. Each machine writes only over the version it read (a
-conditional write), so an update that another machine made in between is
-merged rather than lost.
+ever stores ciphertext. With conditional writes, each machine writes only
+over the version it read, so an update that another machine made in between
+is merged rather than lost. OSS backups instead commit through an atomic
+append journal, described below. See below for other S3 servers without conditional writes.
 
 ```sh
 magpie webdav on https://dav.jianguoyun.com/dav/ user=me@example.com
 magpie s3 on s3://my-bucket/magpie endpoint=https://<account>.r2.cloudflarestorage.com access-key-id=…
 magpie s3 on s3://backups endpoint=http://nas.local:9000 path-style=yes access-key-id=…
+magpie s3 on s3://my-bucket/backups endpoint=https://s3.oss-cn-hangzhou.aliyuncs.com access-key-id=…
 magpie s3                       # where it syncs to and how the last sync went; magpie s3 now, off
 ```
 
 For S3:
 
 - `endpoint` is empty for AWS.
-- `region` defaults to `us-east-1`, or to `auto` on R2.
+- `region` defaults to `us-east-1`, to `auto` on R2, or to the region named
+  by OSS's dedicated S3 endpoint.
 - `path-style=yes` puts the bucket in the path, which MinIO and most servers
   you run yourself need.
 - The secret is asked for and saved like the WebDAV password. It is used only
@@ -1981,10 +1984,64 @@ For S3:
 - The access key needs to read and write `<prefix>/magpie/`. On AWS it also
   needs to list the bucket.
 - A server without conditional writes is supported. There magpie checks the
-  object's ETag just before each write.
+  object's ETag with HEAD just before each unconditional PUT. A write by
+  another machine between those requests can still be overwritten.
 - Shared usage is reconciled only after a complete S3 listing. A missing or
   repeated continuation token, or a listing still truncated after 100 pages,
   reports a sync error and keeps previously downloaded usage days in place.
+
+Choose **OSS** directly in **Sync to** for Alibaba Cloud OSS. Its form fills the dedicated endpoint
+`https://s3.oss-<region>.aliyuncs.com`, using the region entered (Hangzhou,
+`cn-hangzhou`, by default), and turns off path-style. Changing region updates
+the regional endpoint; an existing internal endpoint keeps `-internal`.
+The endpoint can also be edited. WebDAV, S3 and OSS each keep their draft
+while the form is open, and saved targets are kept independently when moving
+sync between them. Existing `other` configurations remain readable; inactive
+targets in `sync.json`'s optional `saved` map include their credentials, while
+the API only exposes whether a secret is saved. Use the bucket's own region and an
+existing bucket. OSS supports virtual-hosted addressing only; the dedicated
+endpoint rejects path-style or a bucket name with dots. It uses the same S3
+backend for snapshots and usage with AWS SigV4 signing. Backup commits also
+use native OSS4-signed AppendObject on the same region's OSS endpoint.
+Only new OSS configurations start with prefix `backups`, making the actual
+directory `backups/magpie/`; saved empty or custom prefixes are preserved.
+
+Local fixtures cover configuration, credentials and signed requests. A real
+`cn-shenzhen` bucket's regional S3 endpoint was also checked with synthetic
+data: explicit and inferred regions, encrypted backup PUT/GET and decryption,
+provider/settings restore into an isolated home, conditional GET (304),
+uppercase ETags, and encrypted usage write/read/import/list/delete under a
+prefix-scoped RAM policy. The default production listing returned three
+usage files in one page. A separate test-only adapter set `max-keys=1` and
+re-signed the query to verify three service pages and two continuation tokens;
+this does not prove pagination with a default production listing of over
+1,000 files. Only objects created in a unique test subdirectory were removed,
+with HEAD confirming their absence.
+
+That endpoint returned HTTP 400 `NotImplemented` for conditional PUT, and
+the former HEAD/PUT fallback allowed two writers of the same ETag to write.
+OSS backups now use unique encrypted snapshots plus an append-only commit
+journal. Append at the previously read byte position is the sole commit;
+another writer's append produces `errChanged`, triggering the existing
+re-read/merge retry. The real test committed exactly one of two different
+synthetic configurations, then re-read and merged the other's changed part.
+The final backup preserved both changes, and all test objects were verified
+absent after cleanup.
+
+The old single backup file is retained as a migration source. **All writing
+devices must upgrade**: old clients cannot participate in the journal, and
+no unprotected compatibility mirror is written. Unknown commit outcomes
+retain their snapshot; no automatic snapshot garbage collection is done.
+Damaged or missing journals and snapshot references report errors rather
+than falling back to old data. See [OSS backup commits](subsystems/oss-sync.md)
+for invariants, failure recovery and verification commands.
+
+Other regions, internal/accelerated endpoints, version-enabled buckets and
+production-sized payloads were not tested against OSS. Native Append's
+position contract is used rather than the version-sensitive forbid-overwrite
+header. See Alibaba's [S3 access guide](https://help.aliyun.com/zh/oss/developer-reference/use-aws-sdks-to-access-oss),
+[compatibility notes](https://help.aliyun.com/zh/oss/developer-reference/compatibility-with-amazon-s3)
+and [conditional-header error](https://help.aliyun.com/zh/oss/user-guide/0017-00000245).
 
 ## OTLP export
 

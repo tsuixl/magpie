@@ -104,6 +104,15 @@ func TestS3Cmd(t *testing.T) {
 	if err := s3Cmd([]string{"on", "s3://bkt", "secret=on-the-command-line"}); err == nil || !strings.Contains(err.Error(), "asked for") {
 		t.Fatalf("a secret on the command line: %v", err)
 	}
+	// Invalid OSS targeting is rejected before reading stdin or connecting.
+	for _, tc := range []struct{ option, want string }{
+		{"path-style=yes", "virtual-hosted"},
+		{"region=us-east-1", "region cn-hangzhou"},
+	} {
+		if err := s3Cmd([]string{"on", "s3://bkt", "endpoint=https://s3.oss-cn-hangzhou.aliyuncs.com", "access-key-id=AKID", tc.option}); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("OSS %s: %v", tc.option, err)
+		}
+	}
 
 	// on: the secret and the passphrase asked for, and a sync at once
 	piped(t, "s3cr3t", "correct horse")
